@@ -13,7 +13,12 @@ fi
 
 ## Setup Wifi password
 if [ -z "${AAWG_WIFI_PASSWORD}" ]; then
-	export AAWG_WIFI_PASSWORD="$(cat /dev/urandom | tr -dc 'A-Za-z0-9@#' | head -c 16)"
+	if [ -f /var/run/aawgd_wifi_password ]; then
+		export AAWG_WIFI_PASSWORD="$(cat /var/run/aawgd_wifi_password)"
+	else
+		export AAWG_WIFI_PASSWORD="$(cat /dev/urandom | tr -dc 'A-Za-z0-9@#' | head -c 16)"
+		echo -n "${AAWG_WIFI_PASSWORD}" > /var/run/aawgd_wifi_password
+	fi
 fi
 
 set +o allexport

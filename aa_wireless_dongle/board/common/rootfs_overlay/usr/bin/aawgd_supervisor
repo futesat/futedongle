@@ -10,6 +10,10 @@ while true; do
 		source /etc/aawgd.conf
 	fi
 
+	if [ -z "$AAWG_WIFI_PASSWORD" ] && [ -f /var/run/aawgd_wifi_password ]; then
+		export AAWG_WIFI_PASSWORD="$(cat /var/run/aawgd_wifi_password)"
+	fi
+
 	/usr/bin/aawgd &
 	PID=$!
 	wait $PID
@@ -18,3 +22,4 @@ while true; do
 	logger -t aawgd-supervisor "aawgd exited with status $STATUS. Respawning in 2 seconds..."
 	sleep 2
 done
+
