@@ -29,6 +29,7 @@ public:
 
     WifiInfo getWifiInfo();
     ConnectionStrategy getConnectionStrategy();
+    bool getEarlyUsbVersionExchange();
 
     std::string getUniqueSuffix();
 private:
@@ -40,6 +41,7 @@ private:
     std::string getMacAddress(std::string interface);
 
     std::optional<ConnectionStrategy> connectionStrategy;
+    std::optional<bool> earlyUsbVersionExchange;
 };
 
 class Logger {

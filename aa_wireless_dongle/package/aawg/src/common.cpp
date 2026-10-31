@@ -88,6 +88,14 @@ ConnectionStrategy Config::getConnectionStrategy() {
 
     return connectionStrategy.value();
 }
+
+bool Config::getEarlyUsbVersionExchange() {
+    if (!earlyUsbVersionExchange.has_value()) {
+        earlyUsbVersionExchange = getenv("AAWG_EARLY_USB_VERSION_EXCHANGE", 1) != 0;
+    }
+
+    return earlyUsbVersionExchange.value();
+}
 #pragma endregion Config
 
 #pragma region Logger

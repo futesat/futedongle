@@ -4,6 +4,7 @@
 #include <fcntl.h>
 #include <string.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <sys/poll.h>
 #include <thread>
@@ -152,11 +153,170 @@ void AAWProxy::stopForwarding(std::atomic<bool>& should_exit) {
     }
 }
 
+constexpr uint16_t default_version_major = 1;
+constexpr uint16_t default_version_minor = 7;
+
+bool AAWProxy::openUsbAccessory() {
+    Logger::instance()->info("Opening usb accessory\n");
+
+    if ((m_usb_fd = open("/dev/usb_accessory", O_RDWR)) < 0) {
+        Logger::instance()->info("error opening /dev/usb_accessory: %s\n", strerror(errno));
+        return false;
+    }
+
+    return true;
+}
+
+bool AAWProxy::shouldDoEarlyVersionExchange() {
+    return Config::instance()->getEarlyUsbVersionExchange();
+}
+
+bool AAWProxy::performUsbVersionExchange() {
+    Logger::instance()->info("Attempting early version exchange with USB\n");
+
+    // Receive version request
+    size_t buffer_len = 16;
+    unsigned char buffer[buffer_len];
+
+    ssize_t len = read(m_usb_fd, buffer, buffer_len);
+    Logger::instance()->info("%zd bytes read from USB\n", len);
+    if (len < 0) {
+        Logger::instance()->info("Read from USB failed: %s\n", strerror(errno));
+        return false;
+    }
+    else if (len != 10) {
+        Logger::instance()->info("Version exchange with USB failed: expected 10 bytes, got %zd\n", len);
+        return false;
+    }
+
+    if (!(buffer[0] == 0 && buffer[1] == 3) // First two bytes of header are 0 and 3 (FRAME_TYPE_FIRST | FRAME_TYPE_LAST)
+        || !(buffer[2] == 0 && buffer[3] == 6) // Length is 6
+        || !(buffer[4] == 0 && buffer[5] == 1) // Control message id is 1 (VERSION_REQUEST)
+    ) {
+        Logger::instance()->info("Version exchange with USB failed: malformed message\n");
+        return false;
+    }
+
+    usb_version_major = (buffer[6] << 8) + buffer[7];
+    usb_version_minor = (buffer[8] << 8) + buffer[9];
+    Logger::instance()->info("USB reported version: %d.%d\n", usb_version_major, usb_version_minor);
+
+    // Send version response
+    unsigned char version_response_buffer[12] = {
+        0x00, 0x03, // Header - FRAME_TYPE_FIRST | FRAME_TYPE_LAST
+        0x00, 0x08, // Payload length
+        0x00, 0x02, // Control message id 2 (VERSION_RESPONSE)
+        (unsigned char)((default_version_major & 0xff00) >> 8), (unsigned char)(default_version_major & 0xff),    // Major version
+        (unsigned char)((default_version_minor & 0xff00) >> 8), (unsigned char)(default_version_minor & 0xff),    // Minor version
+        0x00, 0x00  // Version response status (0 = Match, 0xFFFF = Mismatch)
+    };
+    ssize_t wlen = write(m_usb_fd, version_response_buffer, sizeof(version_response_buffer));
+    Logger::instance()->info("%zd bytes written to USB\n", wlen);
+    if (wlen < 0) {
+        Logger::instance()->info("Write to USB failed: %s\n", strerror(errno));
+        return false;
+    }
+
+    Logger::instance()->info("Version exchange completed with USB\n");
+    return true;
+}
+
+bool AAWProxy::performTcpVersionExchange() {
+    Logger::instance()->info("Performing version exchange with TCP\n");
+
+    // Send version request
+    unsigned char version_request_buffer[10] = {
+        0x00, 0x03, // Header - FRAME_TYPE_FIRST | FRAME_TYPE_LAST
+        0x00, 0x06, // Payload length
+        0x00, 0x01, // Control message id 1 (VERSION_REQUEST)
+        (unsigned char)((usb_version_major & 0xff00) >> 8), (unsigned char)(usb_version_major & 0xff),    // Major version
+        (unsigned char)((usb_version_minor & 0xff00) >> 8), (unsigned char)(usb_version_minor & 0xff),    // Minor version
+    };
+    ssize_t wlen = write(m_tcp_fd, version_request_buffer, sizeof(version_request_buffer));
+    Logger::instance()->info("%zd bytes written to TCP\n", wlen);
+    if (wlen < 0) {
+        Logger::instance()->info("Write to TCP failed: %s\n", strerror(errno));
+        return false;
+    }
+
+    // Receive version response
+    size_t buffer_len = 16;
+    unsigned char buffer[buffer_len];
+
+    ssize_t len = read(m_tcp_fd, buffer, buffer_len);
+    Logger::instance()->info("%zd bytes read from TCP\n", len);
+    if (len < 0) {
+        Logger::instance()->info("Read from TCP failed: %s\n", strerror(errno));
+        return false;
+    }
+    else if (len != 12) {
+        Logger::instance()->info("Version exchange with TCP failed: expected 12 bytes, got %zd\n", len);
+        return false;
+    }
+
+    if (!(buffer[0] == 0 && buffer[1] == 3) // First two bytes of header are 0 and 3 (FRAME_TYPE_FIRST | FRAME_TYPE_LAST)
+        || !(buffer[2] == 0 && buffer[3] == 8) // Length is 8
+        || !(buffer[4] == 0 && buffer[5] == 2) // Control message id is 2 (VERSION_RESPONSE)
+    ) {
+        Logger::instance()->info("Version exchange with TCP failed: malformed message\n");
+        return false;
+    }
+
+    uint16_t tcp_version_major = (buffer[6] << 8) + buffer[7];
+    uint16_t tcp_version_minor = (buffer[8] << 8) + buffer[9];
+    Logger::instance()->info("TCP reported version: %d.%d\n", tcp_version_major, tcp_version_minor);
+
+    if (tcp_version_major != default_version_major || tcp_version_minor != default_version_minor) {
+        Logger::instance()->info("Version from TCP does not match version earlier reported (%d.%d) to USB!\n", default_version_major, default_version_minor);
+    }
+
+    uint16_t tcp_version_response_status = (buffer[10] << 8) + buffer[11];
+    switch (tcp_version_response_status) {
+        case 0: // Match
+            break;
+        case 0xFF:  // Mismatch
+            Logger::instance()->info("TCP reported version mismatch\n");
+            break;
+        default:
+            Logger::instance()->info("TCP reported unknown version response status\n");
+            break;
+    }
+
+    Logger::instance()->info("Version exchange completed with TCP\n");
+    return true;
+}
+
 void AAWProxy::handleClient(int server_sock) {
+    bool earlyVersionExchange = shouldDoEarlyVersionExchange();
+    if (earlyVersionExchange) {
+        if (Config::instance()->getConnectionStrategy() != ConnectionStrategy::USB_FIRST) {
+            if (!UsbManager::instance().enableDefaultAndWaitForAccessory(std::chrono::seconds(30))) {
+                close(server_sock);
+                return;
+            }
+        }
+
+        if (!openUsbAccessory()) {
+            close(server_sock);
+            return;
+        }
+
+        if (!performUsbVersionExchange()) {
+            close(m_usb_fd);
+            m_usb_fd = -1;
+            close(server_sock);
+            return;
+        }
+    }
+
     struct sockaddr client_address;
     socklen_t client_addresslen = sizeof(client_address);
     if ((m_tcp_fd = accept(server_sock, &client_address, &client_addresslen)) < 0) {
         close(server_sock);
+        if (m_usb_fd >= 0) {
+            close(m_usb_fd);
+            m_usb_fd = -1;
+        }
         Logger::instance()->info("accept failed: %s\n", strerror(errno));
         return;
     }
@@ -165,19 +325,39 @@ void AAWProxy::handleClient(int server_sock) {
 
     Logger::instance()->info("Tcp server accepted connection\n");
 
+    // Disable Nagle's algorithm to eliminate touch and audio latency
+    int flag = 1;
+    if (setsockopt(m_tcp_fd, IPPROTO_TCP, TCP_NODELAY, (char *)&flag, sizeof(flag)) < 0) {
+        Logger::instance()->info("setsockopt TCP_NODELAY failed: %s\n", strerror(errno));
+    } else {
+        Logger::instance()->info("TCP_NODELAY enabled on client socket\n");
+    }
+
     // Phone connected via TCP, we can stop retrying bluetooth connection
     BluetoothHandler::instance().stopConnectWithRetry();
 
-    if (Config::instance()->getConnectionStrategy() != ConnectionStrategy::USB_FIRST) {
-        if (!UsbManager::instance().enableDefaultAndWaitForAccessory(std::chrono::seconds(30))) {
+    if (earlyVersionExchange) {
+        if (!performTcpVersionExchange()) {
+            close(m_usb_fd);
+            m_usb_fd = -1;
+            close(m_tcp_fd);
+            m_tcp_fd = -1;
             return;
         }
-    }
+    } else {
+        if (Config::instance()->getConnectionStrategy() != ConnectionStrategy::USB_FIRST) {
+            if (!UsbManager::instance().enableDefaultAndWaitForAccessory(std::chrono::seconds(30))) {
+                close(m_tcp_fd);
+                m_tcp_fd = -1;
+                return;
+            }
+        }
 
-    Logger::instance()->info("Opening usb accessory\n");
-    if ((m_usb_fd = open("/dev/usb_accessory", O_RDWR)) < 0) {
-        Logger::instance()->info("error opening /dev/usb_accessory: %s\n", strerror(errno));
-        return;
+        if (!openUsbAccessory()) {
+            close(m_tcp_fd);
+            m_tcp_fd = -1;
+            return;
+        }
     }
 
     // Set timeout on the TCP socket
@@ -188,6 +368,10 @@ void AAWProxy::handleClient(int server_sock) {
 
     if (setsockopt(m_tcp_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv))) {
         Logger::instance()->info("setsockopt failed: %s\n", strerror(errno));
+        close(m_usb_fd);
+        m_usb_fd = -1;
+        close(m_tcp_fd);
+        m_tcp_fd = -1;
         return;
     }
 
@@ -218,6 +402,9 @@ void AAWProxy::handleClient(int server_sock) {
 
     close(m_tcp_fd);
     m_tcp_fd = -1;
+
+    usb_version_major = 0;
+    usb_version_minor = 0;
 
     Logger::instance()->info("Forwarding stopped\n");
 }
