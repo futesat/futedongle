@@ -1,0 +1,20 @@
+#!/bin/sh
+#
+# aawgd_supervisor - Process supervisor to ensure aawgd auto-respawns
+#
+
+trap 'kill -TERM $PID 2>/dev/null; exit 0' TERM INT
+
+while true; do
+	if [ -z "$AAWG_CONF_SOURCED" ] && [ -f /etc/aawgd.conf ]; then
+		source /etc/aawgd.conf
+	fi
+
+	/usr/bin/aawgd &
+	PID=$!
+	wait $PID
+	STATUS=$?
+
+	logger -t aawgd-supervisor "aawgd exited with status $STATUS. Respawning in 2 seconds..."
+	sleep 2
+done

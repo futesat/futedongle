@@ -3,7 +3,7 @@
 # Start aawgd daemon
 #
 
-DAEMON="aawgd"
+DAEMON="aawgd_supervisor"
 PIDFILE="/var/run/$DAEMON.pid"
 
 
@@ -16,19 +16,22 @@ case "$1" in
 			source /etc/aawgd.conf
 		fi
 
-		printf "Starting $DAEMON: "
+		printf "Starting aawgd (supervised): "
 		start-stop-daemon -S -b -q -m -p "$PIDFILE" -x "/usr/bin/$DAEMON"
 		RETVAL=$?
 		[ $RETVAL = 0 ] && echo "OK" || echo "FAIL"
 		;;
 	stop)
-		printf "Stopping $DAEMON: "
+		printf "Stopping aawgd: "
 		start-stop-daemon -K -q -p "$PIDFILE"
+		killall -q aawgd
+		rm -f "$PIDFILE"
 		RETVAL=$?
 		[ $RETVAL = 0 ] && echo "OK" || echo "FAIL"
 		;;
 	restart)
 		$0 stop
+		sleep 1
 		$0 start
 		;;
 	*)
