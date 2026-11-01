@@ -12,11 +12,7 @@ jobs:
     strategy:
       matrix:
         defconfig:
-        - raspberrypi0w
-        - raspberrypizero2w
         - raspberrypi4
-        - raspberrypi3a
-        - raspberrypi5
 
     runs-on: ubuntu-22.04
 

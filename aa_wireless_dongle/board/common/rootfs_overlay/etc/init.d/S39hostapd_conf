@@ -5,10 +5,13 @@
 
 case "$1" in
 	start)
-		if [ -z "$AAWG_CONF_SOURCED" ]; then
+		if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
 			echo "Source /etc/aawgd.conf"
-			source /etc/aawgd.conf
+			. /etc/aawgd.conf
 		fi
+
+		# Ensure Wi-Fi radio is not soft-blocked by rfkill
+		rfkill unblock wifi 2>/dev/null || true
 
 		echo "Generate hostapd configuration at /var/run/hostapd.conf"
 
@@ -26,9 +29,13 @@ case "$1" in
 			echo "wpa_passphrase=${AAWG_WIFI_PASSWORD}" >> /var/run/hostapd.conf
 		fi
 
-		# Add Wifi country code if set
+		# Add or update Wifi country code if set
 		if [ -n "${AAWG_COUNTRY_CODE}" ]; then
-			echo "country_code=${AAWG_COUNTRY_CODE}" >> /var/run/hostapd.conf
+			if grep -q "^country_code=" /var/run/hostapd.conf; then
+				sed -i "s/^country_code=.*/country_code=${AAWG_COUNTRY_CODE}/" /var/run/hostapd.conf
+			else
+				echo "country_code=${AAWG_COUNTRY_CODE}" >> /var/run/hostapd.conf
+			fi
 		fi
 		;;
 	*)
