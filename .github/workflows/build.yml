@@ -18,7 +18,7 @@ jobs:
         - raspberrypi3a
         - raspberrypi5
 
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
 
     steps:
     - uses: actions/checkout@v4
@@ -43,9 +43,10 @@ jobs:
         path: ./buildroot/output/images/${{ matrix.defconfig }}-sdcard.img.xz
   
   merge:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     needs: build
     steps:
       - uses: actions/upload-artifact/merge@v4
         with:
           name: WirelessAndroidAutoDongle-all
+          pattern: WirelessAndroidAutoDongle-*
