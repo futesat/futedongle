@@ -16,6 +16,11 @@ case "$1" in
 
 		echo >> /var/run/hostapd.conf
 
+		# Override Wifi SSID if set
+		if [ -n "${AAWG_WIFI_SSID}" ]; then
+			sed -i "s/^ssid=.*/ssid=${AAWG_WIFI_SSID}/" /var/run/hostapd.conf
+		fi
+
 		# Add Wifi password
 		if [ -n "${AAWG_WIFI_PASSWORD}" ]; then
 			echo "wpa_passphrase=${AAWG_WIFI_PASSWORD}" >> /var/run/hostapd.conf
