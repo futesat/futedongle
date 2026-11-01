@@ -5,9 +5,11 @@
 set -o allexport
 
 if [ -z "$AAWG_CONF_SOURCED" ]; then
-	echo "Source /etc/aawgd.conf"
-	source /etc/aawgd.conf
-	export AAWG_CONF_SOURCED=1
+	if [ -r /etc/aawgd.conf ]; then
+		echo "Source /etc/aawgd.conf"
+		. /etc/aawgd.conf
+		export AAWG_CONF_SOURCED=1
+	fi
 fi
 
 

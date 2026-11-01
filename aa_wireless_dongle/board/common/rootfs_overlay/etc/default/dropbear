@@ -1,8 +1,8 @@
 #!/bin/sh
 
-if [ -z "$AAWG_CONF_SOURCED" ]; then
+if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
     echo "Source /etc/aawgd.conf"
-    source /etc/aawgd.conf
+    . /etc/aawgd.conf
 fi
 
 if [ -z "$AAWG_ENABLE_SSH" ]; then
