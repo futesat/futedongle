@@ -67,7 +67,7 @@ WifiInfo Config::getWifiInfo() {
     }
 
     return {
-        getenv("AAWG_WIFI_SSID", "AAWirelessDongle"),
+        getenv("AAWG_WIFI_SSID", "futedongle"),
         wifiPassword,
         getenv("AAWG_WIFI_BSSID", getMacAddress("wlan0")),
         SecurityMode::WPA2_PERSONAL,
