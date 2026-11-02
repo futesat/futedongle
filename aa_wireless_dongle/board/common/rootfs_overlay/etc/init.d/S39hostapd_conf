@@ -10,8 +10,18 @@ case "$1" in
 			. /etc/aawgd.conf
 		fi
 
-		# Ensure Wi-Fi radio is not soft-blocked by rfkill
+		# Wait up to 10s for async brcmfmac SDIO firmware load to create wlan0
+		WAIT_COUNT=0
+		while [ ! -d /sys/class/net/wlan0 ] && [ "$WAIT_COUNT" -lt 50 ]; do
+			sleep 0.2
+			WAIT_COUNT=$((WAIT_COUNT + 1))
+		done
+
+		# Ensure Wi-Fi radio is not soft-blocked by rfkill and set regulatory domain
 		rfkill unblock wifi 2>/dev/null || true
+		if [ -n "${AAWG_COUNTRY_CODE}" ]; then
+			/usr/sbin/iw reg set "${AAWG_COUNTRY_CODE}" 2>/dev/null || true
+		fi
 
 		echo "Generate hostapd configuration at /var/run/hostapd.conf"
 

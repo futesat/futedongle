@@ -1,0 +1,66 @@
+#!/bin/sh
+#
+# Optional diagnostic network and boot telemetry (active only when AAWG_ENABLE_SSH is set)
+#
+
+if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
+	. /etc/aawgd.conf
+fi
+
+if [ -z "$AAWG_ENABLE_SSH" ]; then
+	exit 0
+fi
+
+case "$1" in
+	start)
+		# Bring up eth0 with non-blocking background DHCP so bench SSH works without delaying car boot
+		if [ -d /sys/class/net/eth0 ]; then
+			/sbin/ifconfig eth0 up 2>/dev/null || true
+			/sbin/udhcpc -b -S -p /var/run/udhcpc.eth0.pid -i eth0 >/dev/null 2>&1 &
+		fi
+
+		# Dump one-shot boot diagnostic snapshot to /boot/boot_diag.txt and immediately remount /boot read-only
+		(
+			sleep 6
+			if /bin/mount -o remount,rw /boot 2>/dev/null; then
+				{
+					echo "=== BOOT DIAGNOSTICS ==="
+					uptime
+					echo "--- MOUNTS ---"
+					mount
+					echo "--- IP / INTERFACES ---"
+					/sbin/ip addr
+					echo "--- IW DEV ---"
+					/usr/sbin/iw dev
+					/usr/sbin/iw reg get
+					echo "--- RFKILL ---"
+					/usr/sbin/rfkill list
+					echo "--- PROCESSES ---"
+					/bin/ps
+					echo "--- HOSTAPD CONF ---"
+					grep -v "^wpa_passphrase=" /var/run/hostapd.conf 2>/dev/null || true
+					echo "--- HOSTAPD LOG ---"
+					cat /var/log/hostapd 2>/dev/null || true
+					echo "--- SYSLOG TAIL ---"
+					tail -n 100 /var/log/messages 2>/dev/null || true
+					echo "--- DMESG TAIL ---"
+					/bin/dmesg | tail -n 80 2>/dev/null || true
+				} > /boot/boot_diag.txt 2>&1
+				sync
+				/bin/mount -o remount,ro /boot 2>/dev/null || true
+			fi
+		) &
+		;;
+	stop)
+		if [ -f /var/run/udhcpc.eth0.pid ]; then
+			kill "$(cat /var/run/udhcpc.eth0.pid)" 2>/dev/null || true
+			rm -f /var/run/udhcpc.eth0.pid
+		fi
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac
+
+exit 0
