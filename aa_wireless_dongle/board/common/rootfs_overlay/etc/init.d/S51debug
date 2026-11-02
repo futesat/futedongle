@@ -8,6 +8,9 @@ if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
 fi
 
 if [ -z "$AAWG_ENABLE_SSH" ]; then
+	if [ "$1" = "start" ] && [ -d /sys/class/net/eth0 ]; then
+		/sbin/ifconfig eth0 down 2>/dev/null || true
+	fi
 	exit 0
 fi
 
@@ -64,3 +67,4 @@ case "$1" in
 esac
 
 exit 0
+

@@ -7,6 +7,10 @@ on:
   pull_request:
     branches: [ "main" ]
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
@@ -21,6 +25,17 @@ jobs:
       with:
         submodules: recursive
 
+    - name: Cache Buildroot downloads and ccache
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.buildroot-ccache
+          ./buildroot/dl
+        key: buildroot-${{ matrix.defconfig }}-${{ hashFiles('aa_wireless_dongle/configs/**') }}-${{ github.sha }}
+        restore-keys: |
+          buildroot-${{ matrix.defconfig }}-${{ hashFiles('aa_wireless_dongle/configs/**') }}-
+          buildroot-${{ matrix.defconfig }}-
+
     - name: Setup config
       run: make BR2_EXTERNAL=../aa_wireless_dongle/ ${{ matrix.defconfig }}_defconfig
       working-directory: ./buildroot
@@ -30,7 +45,7 @@ jobs:
       working-directory: ./buildroot
 
     - name: Compress sdcard.img
-      run: xz -c sdcard.img > ${{ matrix.defconfig }}-sdcard.img.xz
+      run: xz -T0 -c sdcard.img > ${{ matrix.defconfig }}-sdcard.img.xz
       working-directory: ./buildroot/output/images
 
     - uses: actions/upload-artifact@v4

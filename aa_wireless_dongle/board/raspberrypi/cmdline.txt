@@ -1,1 +1,1 @@
-root=/dev/mmcblk0p2 rootwait ro console=tty1 fsck.repair=yes
+root=/dev/mmcblk0p2 rootwait ro console=tty1 fsck.repair=yes maxcpus=2

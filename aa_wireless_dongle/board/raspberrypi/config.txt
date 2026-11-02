@@ -20,6 +20,14 @@ gpu_mem_256=100
 gpu_mem_512=100
 gpu_mem_1024=100
 
+# Disable unused onboard analog audio to save power
+dtparam=audio=off
+
+[pi4]
+# Cap Cortex-A72 clock to factory minimum DVFS step (600 MHz) to reduce power draw and thermal output
+arm_freq=600
+[all]
+
 # Enable autoprobing of Bluetooth driver without need of hciattach/btattach
 dtparam=krnbt=on
 
