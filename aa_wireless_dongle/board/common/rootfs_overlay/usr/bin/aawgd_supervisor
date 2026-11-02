@@ -5,9 +5,17 @@
 
 trap 'kill -TERM $PID 2>/dev/null; exit 0' TERM INT
 
+# Wait up to 10s for Bluetooth HCI adapter before initial start
+WAIT_COUNT=0
+while [ ! -d /sys/class/bluetooth/hci0 ] && [ "$WAIT_COUNT" -lt 50 ]; do
+	sleep 0.2
+	WAIT_COUNT=$((WAIT_COUNT + 1))
+done
+rfkill unblock bluetooth 2>/dev/null || true
+
 while true; do
-	if [ -z "$AAWG_CONF_SOURCED" ] && [ -f /etc/aawgd.conf ]; then
-		source /etc/aawgd.conf
+	if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
+		. /etc/aawgd.conf
 	fi
 
 	if [ -z "$AAWG_WIFI_PASSWORD" ] && [ -f /var/run/aawgd_wifi_password ]; then

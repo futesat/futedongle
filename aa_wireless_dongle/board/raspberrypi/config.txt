@@ -11,13 +11,14 @@ disable_poe_fan=1
 # If the text shown on the screen disappears off the edge, comment this out
 disable_overscan=1
 
-# Power saving & thermal optimizations for headless automotive dongle
-hdmi_blanking=2
-hdmi_ignore_edid=0xa5000020
-dtparam=audio=off
+# Add the following line if the board need reduce power drain and increase performance disabling hdmi port
+hdmi_blanking=1
 
-# Headless dongle: minimum memory allocated to GPU, freeing RAM for OS
-gpu_mem=16
+# How much memory in MB to assign to the GPU on Pi models having
+# 256, 512 or 1024 MB total memory
+gpu_mem_256=100
+gpu_mem_512=100
+gpu_mem_1024=100
 
 # Enable autoprobing of Bluetooth driver without need of hciattach/btattach
 dtparam=krnbt=on
