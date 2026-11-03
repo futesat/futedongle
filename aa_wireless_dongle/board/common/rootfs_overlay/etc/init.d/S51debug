@@ -1,60 +1,72 @@
 #!/bin/sh
 #
-# Optional diagnostic network and boot telemetry (active only when AAWG_ENABLE_SSH is set)
+# Optional diagnostic network (AAWG_ENABLE_SSH=1) and SD boot telemetry (AAWG_ENABLE_DEBUG_LOG=1)
 #
 
 if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
 	. /etc/aawgd.conf
 fi
 
-if [ -z "$AAWG_ENABLE_SSH" ]; then
-	if [ "$1" = "start" ] && [ -d /sys/class/net/eth0 ]; then
-		/sbin/ifconfig eth0 down 2>/dev/null || true
-	fi
-	exit 0
-fi
-
 case "$1" in
 	start)
-		# Bring up eth0 with non-blocking background DHCP so bench SSH works without delaying car boot
-		if [ -d /sys/class/net/eth0 ]; then
-			/sbin/ifconfig eth0 up 2>/dev/null || true
-			/sbin/udhcpc -b -S -p /var/run/udhcpc.eth0.pid -i eth0 >/dev/null 2>&1 &
+		# Bring up eth0 with non-blocking background DHCP only when SSH is enabled; otherwise power it down
+		if [ "$AAWG_ENABLE_SSH" = "1" ]; then
+			if [ -d /sys/class/net/eth0 ]; then
+				/sbin/ifconfig eth0 up 2>/dev/null || true
+				/sbin/udhcpc -b -S -p /var/run/udhcpc.eth0.pid -i eth0 >/dev/null 2>&1 &
+			fi
+		else
+			if [ -d /sys/class/net/eth0 ]; then
+				/sbin/ifconfig eth0 down 2>/dev/null || true
+			fi
 		fi
 
-		# Dump one-shot boot diagnostic snapshot to /boot/boot_diag.txt and immediately remount /boot read-only
-		(
-			sleep 6
-			if /bin/mount -o remount,rw /boot 2>/dev/null; then
-				{
-					echo "=== BOOT DIAGNOSTICS ==="
-					uptime
-					echo "--- MOUNTS ---"
-					mount
-					echo "--- IP / INTERFACES ---"
-					/sbin/ip addr
-					echo "--- IW DEV ---"
-					/usr/sbin/iw dev
-					/usr/sbin/iw reg get
-					echo "--- RFKILL ---"
-					/usr/sbin/rfkill list
-					echo "--- PROCESSES ---"
-					/bin/ps
-					echo "--- HOSTAPD CONF ---"
-					grep -v "^wpa_passphrase=" /var/run/hostapd.conf 2>/dev/null || true
-					echo "--- HOSTAPD LOG ---"
-					cat /var/log/hostapd 2>/dev/null || true
-					echo "--- SYSLOG TAIL ---"
-					tail -n 100 /var/log/messages 2>/dev/null || true
-					echo "--- DMESG TAIL ---"
-					/bin/dmesg | tail -n 80 2>/dev/null || true
-				} > /boot/boot_diag.txt 2>&1
-				sync
-				/bin/mount -o remount,ro /boot 2>/dev/null || true
-			fi
-		) &
+		# Launch bounded boot/handshake telemetry (6 snapshots x 15s = 90s) only when AAWG_ENABLE_DEBUG_LOG=1
+		if [ "$AAWG_ENABLE_DEBUG_LOG" = "1" ]; then
+			(
+				SNAPSHOT=0
+				while [ "$SNAPSHOT" -lt 6 ]; do
+					sleep 15
+					SNAPSHOT=$((SNAPSHOT + 1))
+					if /bin/mount -o remount,rw /boot 2>/dev/null; then
+						{
+							echo "=== CAR TELEMETRY ($SNAPSHOT/6) $(date) ==="
+							uptime
+							echo "--- USB UDC & GADGET STATE ---"
+							for f in /sys/class/udc/*/state /sys/class/udc/*/current_speed /sys/class/udc/*/function /sys/kernel/config/usb_gadget/*/UDC; do
+								[ -e "$f" ] && echo "$f: $(cat "$f" 2>/dev/null)"
+							done
+							echo "--- BLUETOOTH & RFKILL ---"
+							/usr/sbin/rfkill list 2>/dev/null || true
+							/usr/bin/bluetoothctl show 2>/dev/null || true
+							echo "--- NETWORK & DHCP LEASES ---"
+							/sbin/ip addr 2>/dev/null || true
+							cat /var/lib/misc/dnsmasq.leases 2>/dev/null || true
+							echo "--- PROCESSES ---"
+							/bin/ps
+							echo "--- HOSTAPD CONF ---"
+							grep -v "^wpa_passphrase=" /var/run/hostapd.conf 2>/dev/null || true
+							echo "--- HOSTAPD LOG ---"
+							cat /var/log/hostapd 2>/dev/null || true
+							echo "--- FULL SYSLOG (/var/log/messages) ---"
+							cat /var/log/messages 2>/dev/null || true
+							echo "--- DMESG ---"
+							/bin/dmesg 2>/dev/null || true
+						} > /boot/car_debug.log 2>&1
+						sync
+						/bin/mount -o remount,ro /boot 2>/dev/null || true
+					fi
+				done
+				rm -f /var/run/car_logger.pid
+			) </dev/null >/dev/null 2>&1 &
+			echo $! > /var/run/car_logger.pid
+		fi
 		;;
 	stop)
+		if [ -f /var/run/car_logger.pid ]; then
+			kill "$(cat /var/run/car_logger.pid)" 2>/dev/null || true
+			rm -f /var/run/car_logger.pid
+		fi
 		if [ -f /var/run/udhcpc.eth0.pid ]; then
 			kill "$(cat /var/run/udhcpc.eth0.pid)" 2>/dev/null || true
 			rm -f /var/run/udhcpc.eth0.pid
