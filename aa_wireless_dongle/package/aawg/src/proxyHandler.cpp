@@ -230,7 +230,7 @@ bool AAWProxy::performUsbVersionExchange() {
         (unsigned char)((default_version_minor & 0xff00) >> 8), (unsigned char)(default_version_minor & 0xff),    // Minor version
         0x00, 0x00  // Version response status (0 = Match, 0xFFFF = Mismatch)
     };
-    ssize_t wlen = write(m_usb_fd, version_response_buffer, sizeof(version_response_buffer));
+    ssize_t wlen = writeFully(m_usb_fd, version_response_buffer, sizeof(version_response_buffer));
     Logger::instance()->info("%zd bytes written to USB\n", wlen);
     if (wlen < 0) {
         Logger::instance()->info("Write to USB failed: %s\n", strerror(errno));
@@ -252,7 +252,7 @@ bool AAWProxy::performTcpVersionExchange() {
         (unsigned char)((usb_version_major & 0xff00) >> 8), (unsigned char)(usb_version_major & 0xff),    // Major version
         (unsigned char)((usb_version_minor & 0xff00) >> 8), (unsigned char)(usb_version_minor & 0xff),    // Minor version
     };
-    ssize_t wlen = write(m_tcp_fd, version_request_buffer, sizeof(version_request_buffer));
+    ssize_t wlen = writeFully(m_tcp_fd, version_request_buffer, sizeof(version_request_buffer));
     Logger::instance()->info("%zd bytes written to TCP\n", wlen);
     if (wlen < 0) {
         Logger::instance()->info("Write to TCP failed: %s\n", strerror(errno));
@@ -260,16 +260,16 @@ bool AAWProxy::performTcpVersionExchange() {
     }
 
     // Receive version response
-    size_t buffer_len = 16;
-    unsigned char buffer[buffer_len];
+    constexpr size_t expected_response_len = 12;
+    unsigned char buffer[16];
 
-    ssize_t len = read(m_tcp_fd, buffer, buffer_len);
+    ssize_t len = readFully(m_tcp_fd, buffer, expected_response_len);
     Logger::instance()->info("%zd bytes read from TCP\n", len);
     if (len < 0) {
         Logger::instance()->info("Read from TCP failed: %s\n", strerror(errno));
         return false;
     }
-    else if (len != 12) {
+    else if (len != (ssize_t)expected_response_len) {
         Logger::instance()->info("Version exchange with TCP failed: expected 12 bytes, got %zd\n", len);
         return false;
     }
@@ -353,6 +353,24 @@ void AAWProxy::handleClient(int server_sock) {
         Logger::instance()->info("TCP_NODELAY enabled on client socket\n");
     }
 
+    // Set read/write timeouts on the TCP socket before version exchange and forwarding
+    struct timeval tv = {
+        .tv_sec = 10,
+        .tv_usec = 0,
+    };
+
+    if (setsockopt(m_tcp_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) ||
+        setsockopt(m_tcp_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv))) {
+        Logger::instance()->info("setsockopt timeout failed: %s\n", strerror(errno));
+        if (m_usb_fd >= 0) {
+            close(m_usb_fd);
+            m_usb_fd = -1;
+        }
+        close(m_tcp_fd);
+        m_tcp_fd = -1;
+        return;
+    }
+
     // Phone connected via TCP, we can stop retrying bluetooth connection
     BluetoothHandler::instance().stopConnectWithRetry();
 
@@ -378,21 +396,6 @@ void AAWProxy::handleClient(int server_sock) {
             m_tcp_fd = -1;
             return;
         }
-    }
-
-    // Set timeout on the TCP socket
-    struct timeval tv = {
-        .tv_sec = 10,
-        .tv_usec = 0,
-    };
-
-    if (setsockopt(m_tcp_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv))) {
-        Logger::instance()->info("setsockopt failed: %s\n", strerror(errno));
-        close(m_usb_fd);
-        m_usb_fd = -1;
-        close(m_tcp_fd);
-        m_tcp_fd = -1;
-        return;
     }
 
     // Setup signal handler
@@ -440,6 +443,7 @@ std::optional<std::thread> AAWProxy::startServer(int32_t port) {
     int opt = 1;
     if (setsockopt(server_sock, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt))) {
         Logger::instance()->info("setsockopt failed: %s\n", strerror(errno));
+        close(server_sock);
         return std::nullopt;
     }
 
@@ -450,11 +454,13 @@ std::optional<std::thread> AAWProxy::startServer(int32_t port) {
 
     if (bind(server_sock, (struct sockaddr*)&address, sizeof(address)) < 0) {
         Logger::instance()->info("bind failed: %s\n", strerror(errno));
+        close(server_sock);
         return std::nullopt;
     }
 
     if (listen(server_sock, 3) < 0) {
         Logger::instance()->info("listen failed: %s\n", strerror(errno));
+        close(server_sock);
         return std::nullopt;
     }
 

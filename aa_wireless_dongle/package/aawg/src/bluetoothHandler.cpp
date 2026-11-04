@@ -276,9 +276,8 @@ void BluetoothHandler::connectDevice() {
     }
 }
 
-void BluetoothHandler::retryConnectLoop() {
+void BluetoothHandler::retryConnectLoop(std::future<void> connectWithRetryFuture) {
     bool should_exit = false;
-    std::future<void> connectWithRetryFuture = connectWithRetryPromise->get_future();
     m_triedDirectConnect = false;
 
     constexpr int32_t BT_RETRY_INTERVAL_SECONDS = 15;
@@ -288,6 +287,7 @@ void BluetoothHandler::retryConnectLoop() {
 
         if (connectWithRetryFuture.wait_for(std::chrono::seconds(BT_RETRY_INTERVAL_SECONDS)) == std::future_status::ready) {
             should_exit = true;
+            std::lock_guard<std::mutex> lock(m_retryMutex);
             connectWithRetryPromise = nullptr;
         }
     }
@@ -331,13 +331,20 @@ std::optional<std::thread> BluetoothHandler::connectWithRetry() {
         return std::nullopt;
     }
 
-    connectWithRetryPromise = std::make_shared<std::promise<void>>();
-    return std::thread(&BluetoothHandler::retryConnectLoop, this);
+    std::future<void> connectWithRetryFuture;
+    {
+        std::lock_guard<std::mutex> lock(m_retryMutex);
+        connectWithRetryPromise = std::make_shared<std::promise<void>>();
+        connectWithRetryFuture = connectWithRetryPromise->get_future();
+    }
+    return std::thread(&BluetoothHandler::retryConnectLoop, this, std::move(connectWithRetryFuture));
 }
 
 void BluetoothHandler::stopConnectWithRetry() {
+    std::lock_guard<std::mutex> lock(m_retryMutex);
     if (connectWithRetryPromise) {
         connectWithRetryPromise->set_value();
+        connectWithRetryPromise = nullptr;
     }
 }
 
