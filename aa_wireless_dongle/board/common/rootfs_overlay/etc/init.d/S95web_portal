@@ -1,0 +1,44 @@
+#!/bin/sh
+#
+# Start futedongle Local Web Control & Diagnostics Portal (http://10.0.0.1)
+#
+
+DAEMON="futedongle_web"
+PIDFILE="/var/run/$DAEMON.pid"
+
+if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
+	. /etc/aawgd.conf
+fi
+
+RETVAL=0
+
+case "$1" in
+	start)
+		if [ "${AAWG_ENABLE_WEB_PORTAL:-1}" != "1" ]; then
+			echo "Skipping $DAEMON (AAWG_ENABLE_WEB_PORTAL=0)"
+			exit 0
+		fi
+		printf "Starting $DAEMON: "
+		start-stop-daemon -S -b -q -m -p "$PIDFILE" -x "/usr/bin/$DAEMON"
+		RETVAL=$?
+		[ $RETVAL = 0 ] && echo "OK" || echo "FAIL"
+		;;
+	stop)
+		printf "Stopping $DAEMON: "
+		start-stop-daemon -K -q -p "$PIDFILE"
+		rm -f "$PIDFILE"
+		RETVAL=$?
+		[ $RETVAL = 0 ] && echo "OK" || echo "FAIL"
+		;;
+	restart)
+		$0 stop
+		sleep 1
+		$0 start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
+
+exit $RETVAL

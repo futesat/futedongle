@@ -4,8 +4,12 @@ on:
   workflow_dispatch:
   push:
     branches: [ "main" ]
+    paths-ignore:
+      - "next-feats/**"
   pull_request:
     branches: [ "main" ]
+    paths-ignore:
+      - "next-feats/**"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
