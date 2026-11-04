@@ -2,6 +2,8 @@
 
 #include <atomic>
 #include <cstdint>
+#include <future>
+#include <mutex>
 #include <optional>
 #include <thread>
 
@@ -40,8 +42,9 @@ private:
     void startAdvertising();
     void stopAdvertising();
 
-    void retryConnectLoop();
+    void retryConnectLoop(std::future<void> connectWithRetryFuture);
 
+    std::mutex m_retryMutex;
     std::shared_ptr<std::promise<void>> connectWithRetryPromise;
     std::atomic<int64_t> m_lastHandoffTimestampMs{0};
     bool m_triedDirectConnect{false};

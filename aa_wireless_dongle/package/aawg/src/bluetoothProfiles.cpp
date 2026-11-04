@@ -69,11 +69,40 @@ public:
 
         SendMessage(MessageId::WifiInfoResponse, &wifiInfoResponse);
 
-        ReadMessage();
-        ReadMessage();
+        if (ReadMessage() != MessageId::Invalid) {
+            ReadMessage();
+        }
     }
 
 private:
+    ssize_t ReadFully(void* buf, size_t nbyte) {
+        unsigned char* ptr = static_cast<unsigned char*>(buf);
+        size_t remaining = nbyte;
+        while (remaining > 0) {
+            ssize_t len = read(m_fd, ptr, remaining);
+            if (len <= 0) {
+                return len;
+            }
+            ptr += len;
+            remaining -= len;
+        }
+        return nbyte;
+    }
+
+    ssize_t WriteFully(const void* buf, size_t nbyte) {
+        const unsigned char* ptr = static_cast<const unsigned char*>(buf);
+        size_t remaining = nbyte;
+        while (remaining > 0) {
+            ssize_t len = write(m_fd, ptr, remaining);
+            if (len <= 0) {
+                return len;
+            }
+            ptr += len;
+            remaining -= len;
+        }
+        return nbyte;
+    }
+
     enum class MessageId {
         Invalid = -1,
         WifiStartRequest = 1,
@@ -120,7 +149,7 @@ private:
 
         message->SerializeToArray(buffer + 4, messageSize);
 
-        ssize_t wrote = write(m_fd, buffer, length);
+        ssize_t wrote = WriteFully(buffer, length);
         if (wrote < 0) {
             Logger::instance()->info("Error sending %s, messageId: %d\n", MessageName(messageId).c_str(), messageId);
         }
@@ -135,7 +164,7 @@ private:
         uint16_t networkShort = 0;
         ssize_t readBytes;
 
-        readBytes = read(m_fd, &networkShort, 2);
+        readBytes = ReadFully(&networkShort, 2);
         if (readBytes != 2) {
             // Could not read 2 bytes. Do something.
             Logger::instance()->info("Error reading length, read bytes: %d, errno: %s\n", readBytes, strerror(errno));
@@ -143,7 +172,7 @@ private:
         }
         uint16_t length = ntohs(networkShort);
 
-        readBytes = read(m_fd, &networkShort, 2);
+        readBytes = ReadFully(&networkShort, 2);
         if (readBytes != 2) {
             // Could not read 2 bytes. Do something.
             Logger::instance()->info("Error reading message id, read bytes: %d, errno: %s\n", readBytes, strerror(errno));
@@ -153,10 +182,15 @@ private:
 
         Logger::instance()->info("Read %s. length: %d, messageId: %d\n", MessageName(messageId).c_str(), length, messageId);
         
-        unsigned char* buffer = new unsigned char[length];
-        readBytes = read(m_fd, buffer, length);
-
-        delete[] buffer;
+        if (length > 0) {
+            unsigned char* buffer = new unsigned char[length];
+            readBytes = ReadFully(buffer, length);
+            delete[] buffer;
+            if (readBytes != (ssize_t)length) {
+                Logger::instance()->info("Error reading payload, read bytes: %d, expected: %d, errno: %s\n", readBytes, length, strerror(errno));
+                return MessageId::Invalid;
+            }
+        }
 
         return messageId;
     }
