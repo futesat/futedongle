@@ -2,6 +2,8 @@
 #include <thread>
 #include <unistd.h>
 #include <fcntl.h>
+#include <sys/socket.h>
+#include <sys/time.h>
 #include <arpa/inet.h>
 
 #include "common.h"
@@ -30,9 +32,16 @@ public:
     AAWirelessLauncher(int fd): m_fd(fd) {};
 
     void launch() {
-        // Make fd blocking
+        // Make fd blocking with a 5-second timeout so DBus dispatcher thread never hangs
         int fd_flags = fcntl(m_fd, F_GETFL);
         fcntl(m_fd, F_SETFL, fd_flags & ~O_NONBLOCK);
+
+        struct timeval tv = {
+            .tv_sec = 5,
+            .tv_usec = 0,
+        };
+        setsockopt(m_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(m_fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
 
         WifiInfo wifiInfo = Config::instance()->getWifiInfo();
 

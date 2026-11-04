@@ -11,6 +11,7 @@
 #include <optional>
 #include <atomic>
 #include <string>
+#include <vector>
 
 #include "common.h"
 #include "usb.h"
@@ -28,6 +29,22 @@ ssize_t AAWProxy::readFully(int fd, unsigned char *buffer, size_t nbyte) {
 
         if (len <= 0) {
             // Error, cannot read more.
+            return len;
+        }
+
+        buffer += len;
+        remaining_bytes -= len;
+    }
+
+    return nbyte;
+}
+
+ssize_t AAWProxy::writeFully(int fd, const unsigned char *buffer, size_t nbyte) {
+    size_t remaining_bytes = nbyte;
+    while (remaining_bytes > 0) {
+        ssize_t len = write(fd, buffer, remaining_bytes);
+
+        if (len <= 0) {
             return len;
         }
 
@@ -67,8 +84,9 @@ ssize_t AAWProxy::readMessage(int fd, unsigned char *buffer, size_t buffer_len) 
 }
 
 void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit) {
-    size_t buffer_len = 16384;
-    unsigned char buffer[buffer_len];
+    constexpr size_t MAX_TCP_FRAME_BUFFER_LEN = 65544; // 65535 max 16-bit payload + up to 8-byte header
+    constexpr size_t USB_BULK_BUFFER_LEN = 16384;
+    std::vector<unsigned char> buffer(MAX_TCP_FRAME_BUFFER_LEN);
 
     bool read_message;
     int read_fd, write_fd;
@@ -96,7 +114,9 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
 
     while (!should_exit) {
         // Read
-        ssize_t len = read_message ? readMessage(read_fd, buffer, buffer_len) : read(read_fd, buffer, buffer_len);
+        ssize_t len = read_message
+            ? readMessage(read_fd, buffer.data(), buffer.size())
+            : read(read_fd, buffer.data(), USB_BULK_BUFFER_LEN);
 
         if (len <= 0) {
             // Start logging read/write details if there is an error.
@@ -118,7 +138,7 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
         }
 
         // Write
-        ssize_t wlen = write(write_fd, buffer, len);
+        ssize_t wlen = writeFully(write_fd, buffer.data(), len);
 
         if (wlen <= 0) {
             // Start logging read/write details if there is an error.
