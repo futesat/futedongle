@@ -157,7 +157,6 @@ void BluetoothHandler::exportProfiles() {
         }
         registerProfile(HSP_HS_PROFILE_OBJECT_PATH, HSP_HS_UUID, {
             {"Name", DBus::Variant("HSP HS")},
-            {"RequireAuthentication", DBus::Variant(false)},
             {"RequireAuthorization", DBus::Variant(false)},
             {"AutoConnect", DBus::Variant(true)},
         });
@@ -233,6 +232,7 @@ void BluetoothHandler::connectDevice() {
         Logger::instance()->info("Trying to connect bluetooth device at path: %s\n", device_path.c_str());
 
         std::shared_ptr<DBus::ObjectProxy> bluezDevice = m_connection->create_object_proxy(BLUEZ_BUS_NAME, device_path);
+        DBus::MethodProxy connectDeviceAll = *(bluezDevice->create_method<void()>(INTERFACE_BLUEZ_DEVICE, "Connect"));
         DBus::MethodProxy connectProfile = *(bluezDevice->create_method<void(std::string)>(INTERFACE_BLUEZ_DEVICE, "ConnectProfile"));
         DBus::MethodProxy disconnect = *(bluezDevice->create_method<void()>(INTERFACE_BLUEZ_DEVICE, "Disconnect"));
 
@@ -259,7 +259,16 @@ void BluetoothHandler::connectDevice() {
                 m_triedDirectConnect = true;
             }
 
-            connectProfile(isDongleMode ? "" : HSP_AG_UUID);
+            if (isDongleMode) {
+                connectProfile("");
+            } else {
+                try {
+                    connectProfile(HSP_AG_UUID);
+                } catch (DBus::Error& hspErr) {
+                    Logger::instance()->info("ConnectProfile(HSP_AG) failed (%s), falling back to Device1.Connect()\n", hspErr.what());
+                    connectDeviceAll();
+                }
+            }
             Logger::instance()->info("Bluetooth connected to the device\n");
             if (!isDongleMode) {
                 return;
@@ -280,7 +289,7 @@ void BluetoothHandler::retryConnectLoop(std::future<void> connectWithRetryFuture
     bool should_exit = false;
     m_triedDirectConnect = false;
 
-    constexpr int32_t BT_RETRY_INTERVAL_SECONDS = 15;
+    constexpr int32_t BT_RETRY_INTERVAL_SECONDS = 5;
 
     while (!should_exit) {
         connectDevice();
