@@ -608,6 +608,19 @@ void handlePostConfig(int clientFd, const std::string& body) {
     } else {
         confContent << "#AAWG_OBD_BLE_MAC=\n";
     }
+    confContent << "\nif [ ! -f /tmp/dnsmasq.conf ]; then\n"
+                << "\tcat << 'EOF' > /tmp/dnsmasq.conf\n"
+                << "interface=wlan0\n"
+                << "dhcp-range=10.0.0.2,10.0.0.20,12h\n"
+                << "dhcp-authoritative\n"
+                << "no-resolv\n"
+                << "no-poll\n"
+                << "domain-needed\n"
+                << "bogus-priv\n"
+                << "address=/futedongle.lan/10.0.0.1\n"
+                << "EOF\n"
+                << "\t/bin/mount --bind /tmp/dnsmasq.conf /etc/dnsmasq.conf 2>/dev/null || true\n"
+                << "fi\n";
 
     std::string serialized = confContent.str();
     int outFd = open(tmpPath.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
