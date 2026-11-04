@@ -1,617 +1,704 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
-<title>futedongle — Control &amp; Diagnostics</title>
-<style>
-  :root {
-    --bg: #0b0f17;
-    --card: #151c28;
-    --border: #243044;
-    --text: #e6edf3;
-    --muted: #8b9bb4;
-    --accent: #3b82f6;
-    --accent-hover: #2563eb;
-    --ok: #10b981;
-    --warn: #f59e0b;
-    --err: #ef4444;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: var(--bg);
-    color: var(--text);
-    line-height: 1.45;
-    padding-bottom: 32px;
-  }
-  header {
-    background: var(--card);
-    border-bottom: 1px solid var(--border);
-    padding: 14px 16px;
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    position: sticky;
-    top: 0;
-    z-index: 10;
-  }
-  .brand {
-    font-weight: 700;
-    font-size: 1.1rem;
-    letter-spacing: 0.3px;
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-  .dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: var(--muted);
-    display: inline-block;
-  }
-  .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
-  .dot.warn { background: var(--warn); }
-  .dot.err { background: var(--err); }
-  nav {
-    display: grid;
-    grid-template-columns: repeat(4, 1fr);
-    background: var(--card);
-    border-bottom: 1px solid var(--border);
-  }
-  nav button {
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    color: var(--muted);
-    padding: 12px 6px;
-    font-size: 0.85rem;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  nav button.active {
-    color: var(--accent);
-    border-bottom-color: var(--accent);
-  }
-  main {
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 14px;
-  }
-  .tab { display: none; }
-  .tab.active { display: block; }
-  .card {
-    background: var(--card);
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 14px;
-    margin-bottom: 12px;
-  }
-  .card h2 {
-    font-size: 0.9rem;
-    text-transform: uppercase;
-    letter-spacing: 0.6px;
-    color: var(--muted);
-    margin-bottom: 10px;
-  }
-  .grid {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
-  }
-  .metric {
-    background: rgba(255,255,255,0.02);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px;
-  }
-  .metric .label {
-    font-size: 0.75rem;
-    color: var(--muted);
-  }
-  .metric .value {
-    font-size: 1.05rem;
-    font-weight: 700;
-    margin-top: 2px;
-    word-break: break-word;
-  }
-  .badge {
-    display: inline-block;
-    padding: 2px 8px;
-    border-radius: 999px;
-    font-size: 0.78rem;
-    font-weight: 600;
-  }
-  .badge.ok { background: rgba(16,185,129,0.16); color: var(--ok); }
-  .badge.warn { background: rgba(245,158,11,0.16); color: var(--warn); }
-  .badge.err { background: rgba(239,68,68,0.16); color: var(--err); }
-  .actions {
-    display: grid;
-    grid-template-columns: repeat(2, 1fr);
-    gap: 10px;
-  }
-  button.btn, a.btn {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    border-radius: 8px;
-    padding: 10px 12px;
-    font-size: 0.88rem;
-    font-weight: 600;
-    text-decoration: none;
-    cursor: pointer;
-    text-align: center;
-  }
-  button.btn:hover, a.btn:hover { background: var(--accent-hover); }
-  button.btn.secondary, a.btn.secondary {
-    background: #243044;
-    color: var(--text);
-  }
-  button.btn.danger { background: var(--err); }
-  .form-row {
-    margin-bottom: 12px;
-  }
-  .form-row label {
-    display: block;
-    font-size: 0.82rem;
-    font-weight: 600;
-    margin-bottom: 4px;
-  }
-  .form-row small {
-    display: block;
-    font-size: 0.74rem;
-    color: var(--muted);
-    margin-bottom: 4px;
-  }
-  input[type="text"], select {
-    width: 100%;
-    background: #0b0f17;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    color: var(--text);
-    padding: 9px 11px;
-    font-size: 0.9rem;
-  }
-  pre.log-box {
-    background: #070a10;
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 10px;
-    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    font-size: 0.76rem;
-    line-height: 1.4;
-    color: #cbd5e1;
-    max-height: 55vh;
-    overflow: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-  .toolbar {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 10px;
-    flex-wrap: wrap;
-  }
-  .toolbar select { flex: 1; min-width: 150px; }
-  .toast {
-    position: fixed;
-    bottom: 16px;
-    left: 16px;
-    right: 16px;
-    max-width: 520px;
-    margin: 0 auto;
-    background: #1e293b;
-    border: 1px solid var(--accent);
-    color: var(--text);
-    padding: 11px 14px;
-    border-radius: 8px;
-    font-size: 0.86rem;
-    display: none;
-    z-index: 50;
-  }
-  table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.82rem;
-  }
-  th, td {
-    text-align: left;
-    padding: 6px 4px;
-    border-bottom: 1px solid var(--border);
-  }
-  th { color: var(--muted); font-weight: 600; }
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+  <title>futedongle — Control &amp; Diagnostics</title>
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --card: #151c28;
+      --border: #243044;
+      --text: #e6edf3;
+      --muted: #8b9bb4;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --ok: #10b981;
+      --warn: #f59e0b;
+      --err: #ef4444;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      padding-bottom: 32px;
+    }
+
+    header {
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 16px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+
+    .brand {
+      font-weight: 700;
+      font-size: 1.1rem;
+      letter-spacing: 0.3px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--muted);
+      display: inline-block;
+    }
+
+    .dot.ok {
+      background: var(--ok);
+      box-shadow: 0 0 8px var(--ok);
+    }
+
+    .dot.warn {
+      background: var(--warn);
+    }
+
+    .dot.err {
+      background: var(--err);
+    }
+
+    nav {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      background: var(--card);
+      border-bottom: 1px solid var(--border);
+    }
+
+    nav button {
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      color: var(--muted);
+      padding: 12px 6px;
+      font-size: 0.85rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    nav button.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    main {
+      max-width: 720px;
+      margin: 0 auto;
+      padding: 14px;
+    }
+
+    .tab {
+      display: none;
+    }
+
+    .tab.active {
+      display: block;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 14px;
+      margin-bottom: 12px;
+    }
+
+    .card h2 {
+      font-size: 0.9rem;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    .metric {
+      background: rgba(255, 255, 255, 0.02);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+    }
+
+    .metric .label {
+      font-size: 0.75rem;
+      color: var(--muted);
+    }
+
+    .metric .value {
+      font-size: 1.05rem;
+      font-weight: 700;
+      margin-top: 2px;
+      word-break: break-word;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+
+    .badge.ok {
+      background: rgba(16, 185, 129, 0.16);
+      color: var(--ok);
+    }
+
+    .badge.warn {
+      background: rgba(245, 158, 11, 0.16);
+      color: var(--warn);
+    }
+
+    .badge.err {
+      background: rgba(239, 68, 68, 0.16);
+      color: var(--err);
+    }
+
+    .actions {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+
+    button.btn,
+    a.btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 10px 12px;
+      font-size: 0.88rem;
+      font-weight: 600;
+      text-decoration: none;
+      cursor: pointer;
+      text-align: center;
+    }
+
+    button.btn:hover,
+    a.btn:hover {
+      background: var(--accent-hover);
+    }
+
+    button.btn.secondary,
+    a.btn.secondary {
+      background: #243044;
+      color: var(--text);
+    }
+
+    button.btn.danger {
+      background: var(--err);
+    }
+
+    .form-row {
+      margin-bottom: 12px;
+    }
+
+    .form-row label {
+      display: block;
+      font-size: 0.82rem;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .form-row small {
+      display: block;
+      font-size: 0.74rem;
+      color: var(--muted);
+      margin-bottom: 4px;
+    }
+
+    input[type="text"],
+    select {
+      width: 100%;
+      background: #0b0f17;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 9px 11px;
+      font-size: 0.9rem;
+    }
+
+    pre.log-box {
+      background: #070a10;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: 0.76rem;
+      line-height: 1.4;
+      color: #cbd5e1;
+      max-height: 55vh;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .toolbar {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+
+    .toolbar select {
+      flex: 1;
+      min-width: 150px;
+    }
+
+    .toast {
+      position: fixed;
+      bottom: 16px;
+      left: 16px;
+      right: 16px;
+      max-width: 520px;
+      margin: 0 auto;
+      background: #1e293b;
+      border: 1px solid var(--accent);
+      color: var(--text);
+      padding: 11px 14px;
+      border-radius: 8px;
+      font-size: 0.86rem;
+      display: none;
+      z-index: 50;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+
+    th,
+    td {
+      text-align: left;
+      padding: 6px 4px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    th {
+      color: var(--muted);
+      font-weight: 600;
+    }
+  </style>
 </head>
+
 <body>
 
-<header>
-  <div class="brand">
-    <span id="hdr-dot" class="dot"></span>
-    <span>futedongle</span>
-  </div>
-  <div id="hdr-sub" style="font-size:0.78rem;color:var(--muted);">Connecting...</div>
-</header>
+  <header>
+    <div class="brand">
+      <span id="hdr-dot" class="dot"></span>
+      <span>futedongle</span>
+    </div>
+    <div id="hdr-sub" style="font-size:0.78rem;color:var(--muted);">Connecting...</div>
+  </header>
 
-<nav>
-  <button class="active" onclick="switchTab('status', this)">Status</button>
-  <button onclick="switchTab('gte', this)">Passat GTE</button>
-  <button onclick="switchTab('config', this)">Config</button>
-  <button onclick="switchTab('logs', this)">Logs</button>
-</nav>
+  <nav>
+    <button class="active" onclick="switchTab('status', this)">Status</button>
+    <button onclick="switchTab('gte', this)">Car</button>
+    <button onclick="switchTab('config', this)">Config</button>
+    <button onclick="switchTab('logs', this)">Logs</button>
+  </nav>
 
-<main>
-  <!-- TAB 1: LIVE STATUS -->
-  <section id="tab-status" class="tab active">
-    <div class="card">
-      <h2>Android Auto &amp; MIB3 USB Link</h2>
-      <div class="grid">
-        <div class="metric">
-          <div class="label">AA TCP Proxy (:5288)</div>
-          <div class="value" id="st-proxy">-</div>
-        </div>
-        <div class="metric">
-          <div class="label">aawgd Daemon</div>
-          <div class="value" id="st-aawgd">-</div>
-        </div>
-        <div class="metric">
-          <div class="label">MIB3 USB UDC State</div>
-          <div class="value" id="st-udc">-</div>
-        </div>
-        <div class="metric">
-          <div class="label">Active USB Gadget</div>
-          <div class="value" id="st-gadget">-</div>
+  <main>
+    <!-- TAB 1: LIVE STATUS -->
+    <section id="tab-status" class="tab active">
+      <div class="card">
+        <h2>Android Auto &amp; MIB3 USB Link</h2>
+        <div class="grid">
+          <div class="metric">
+            <div class="label">AA TCP Proxy (:5288)</div>
+            <div class="value" id="st-proxy">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">aawgd Daemon</div>
+            <div class="value" id="st-aawgd">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">MIB3 USB UDC State</div>
+            <div class="value" id="st-udc">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Active USB Gadget</div>
+            <div class="value" id="st-gadget">-</div>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="card">
-      <h2>Raspberry Pi 4B Hardware &amp; Power</h2>
-      <div class="grid">
-        <div class="metric">
-          <div class="label">SoC Temperature</div>
-          <div class="value" id="st-temp">-</div>
-        </div>
-        <div class="metric">
-          <div class="label">CPU Clock / Load</div>
-          <div class="value" id="st-cpu">-</div>
-        </div>
-        <div class="metric">
-          <div class="label">USB Power / Brownouts</div>
-          <div class="value" id="st-uv">-</div>
-        </div>
-        <div class="metric">
-          <div class="label">Uptime / Free RAM</div>
-          <div class="value" id="st-uptime">-</div>
+      <div class="card">
+        <h2>Raspberry Pi 4B Hardware &amp; Power</h2>
+        <div class="grid">
+          <div class="metric">
+            <div class="label">SoC Temperature</div>
+            <div class="value" id="st-temp">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">CPU Clock / Load</div>
+            <div class="value" id="st-cpu">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">USB Power / Brownouts</div>
+            <div class="value" id="st-uv">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Uptime / Free RAM</div>
+            <div class="value" id="st-uptime">-</div>
+          </div>
         </div>
       </div>
-    </div>
 
-    <div class="card">
-      <h2>Connected Wi-Fi Clients (wlan0)</h2>
-      <table>
-        <thead>
-          <tr><th>IP</th><th>Hostname</th><th>MAC</th></tr>
-        </thead>
-        <tbody id="st-leases">
-          <tr><td colspan="3" style="color:var(--muted);">No active DHCP leases</td></tr>
-        </tbody>
-      </table>
-    </div>
-
-    <div class="card">
-      <h2>Quick Actions</h2>
-      <div class="actions">
-        <button class="btn" onclick="runAction('restart_aawgd')">Restart AAWG</button>
-        <button class="btn secondary" onclick="runAction('capture_snapshot_now')">Snapshot to SD</button>
-        <button class="btn secondary" onclick="runAction('clear_bt_pairings')">Clear BT Pairings</button>
-        <button class="btn danger" onclick="confirmReboot()">Reboot Dongle</button>
+      <div class="card">
+        <h2>Connected Wi-Fi Clients (wlan0)</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>IP</th>
+              <th>Hostname</th>
+              <th>MAC</th>
+            </tr>
+          </thead>
+          <tbody id="st-leases">
+            <tr>
+              <td colspan="3" style="color:var(--muted);">No active DHCP leases</td>
+            </tr>
+          </tbody>
+        </table>
       </div>
-    </div>
-  </section>
 
-  <!-- TAB 2: PASSAT B8 GTE TELEMETRY -->
-  <section id="tab-gte" class="tab">
-    <div class="card">
-      <h2>VW Passat B8 GTE Hybrid Telemetry</h2>
-      <p id="gte-banner" style="font-size:0.83rem;color:var(--muted);margin-bottom:10px;">
-        Waiting for live OBD-II BLE stream (/run/gte_telemetry.json)...
-      </p>
-      <div class="grid">
-        <div class="metric">
-          <div class="label">HV Battery SoC (Display / Gross)</div>
-          <div class="value" id="gte-soc">-</div>
-        </div>
-        <div class="metric">
-          <div class="label">HV Instant Power</div>
-          <div class="value" id="gte-power">-</div>
-        </div>
-        <div class="metric">
-          <div class="label">HV Pack Voltage / Current</div>
-          <div class="value" id="gte-vi">-</div>
-        </div>
-        <div class="metric">
-          <div class="label">HV Cell Temp (Min / Max)</div>
-          <div class="value" id="gte-hvtemp">-</div>
-        </div>
-        <div class="metric">
-          <div class="label">1.4 TSI RPM / Oil Temp</div>
-          <div class="value" id="gte-ice">-</div>
-        </div>
-        <div class="metric">
-          <div class="label">12V Aux Battery</div>
-          <div class="value" id="gte-12v">-</div>
+      <div class="card">
+        <h2>Quick Actions</h2>
+        <div class="actions">
+          <button class="btn" onclick="runAction('restart_aawgd')">Restart AAWG</button>
+          <button class="btn secondary" onclick="runAction('capture_snapshot_now')">Snapshot to SD</button>
+          <button class="btn secondary" onclick="runAction('clear_bt_pairings')">Clear BT Pairings</button>
+          <button class="btn danger" onclick="confirmReboot()">Reboot Dongle</button>
         </div>
       </div>
-    </div>
-  </section>
+    </section>
 
-  <!-- TAB 3: CONFIGURATION EDITOR -->
-  <section id="tab-config" class="tab">
-    <div class="card">
-      <h2>/boot/aawgd.conf Editor</h2>
-      <form id="cfg-form" onsubmit="saveConfig(event)">
-        <div class="form-row">
-          <label>5 GHz Wi-Fi SSID (AAWG_WIFI_SSID)</label>
-          <input type="text" name="AAWG_WIFI_SSID" id="cfg-ssid" required maxlength="32">
+    <!-- TAB 2: PASSAT B8 GTE TELEMETRY -->
+    <section id="tab-gte" class="tab">
+      <div class="card">
+        <h2>VW Passat B8 GTE Hybrid Telemetry</h2>
+        <p id="gte-banner" style="font-size:0.83rem;color:var(--muted);margin-bottom:10px;">
+          Waiting for live OBD-II BLE stream (/run/gte_telemetry.json)...
+        </p>
+        <div class="grid">
+          <div class="metric">
+            <div class="label">HV Battery SoC (Display / Gross)</div>
+            <div class="value" id="gte-soc">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">HV Instant Power</div>
+            <div class="value" id="gte-power">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">HV Pack Voltage / Current</div>
+            <div class="value" id="gte-vi">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">HV Cell Temp (Min / Max)</div>
+            <div class="value" id="gte-hvtemp">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">1.4 TSI RPM / Oil Temp</div>
+            <div class="value" id="gte-ice">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">12V Aux Battery</div>
+            <div class="value" id="gte-12v">-</div>
+          </div>
         </div>
-        <div class="form-row">
-          <label>Bluetooth Alias (AAWG_BLUETOOTH_NAME)</label>
-          <input type="text" name="AAWG_BLUETOOTH_NAME" id="cfg-btname" required maxlength="32">
-        </div>
-        <div class="form-row">
-          <label>Country Code (AAWG_COUNTRY_CODE)</label>
-          <input type="text" name="AAWG_COUNTRY_CODE" id="cfg-country" required maxlength="2">
-        </div>
-        <div class="form-row">
-          <label>Connection Strategy (AAWG_CONNECTION_STRATEGY)</label>
-          <select name="AAWG_CONNECTION_STRATEGY" id="cfg-strategy">
-            <option value="1">1 — Phone First (Default)</option>
-            <option value="2">2 — USB First</option>
-            <option value="0">0 — Dongle Mode (BLE Advertising)</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>Early USB Version Exchange (AAWG_EARLY_USB_VERSION_EXCHANGE)</label>
-          <select name="AAWG_EARLY_USB_VERSION_EXCHANGE" id="cfg-early">
-            <option value="0">0 — Disabled (Recommended)</option>
-            <option value="1">1 — Enabled</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>Boot Debug Telemetry (/boot/car_debug.log)</label>
-          <small>Captures 6 snapshots over the first 90s then stops automatically.</small>
-          <select name="AAWG_ENABLE_DEBUG_LOG" id="cfg-debug">
-            <option value="1">1 — Enabled</option>
-            <option value="0">0 — Disabled</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>Local Web Control Portal (AAWG_ENABLE_WEB_PORTAL)</label>
-          <select name="AAWG_ENABLE_WEB_PORTAL" id="cfg-web">
-            <option value="1">1 — Enabled</option>
-            <option value="0">0 — Disabled</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>SSH Diagnostic Access over eth0 (AAWG_ENABLE_SSH)</label>
-          <select name="AAWG_ENABLE_SSH" id="cfg-ssh">
-            <option value="0">0 — Disabled (Saves Power in Car)</option>
-            <option value="1">1 — Enabled</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>Passat GTE OBD-II BLE Telemetry (AAWG_ENABLE_OBD_TELEMETRY)</label>
-          <select name="AAWG_ENABLE_OBD_TELEMETRY" id="cfg-obd">
-            <option value="0">0 — Disabled</option>
-            <option value="1">1 — Enabled</option>
-          </select>
-        </div>
-        <div class="form-row">
-          <label>OBD-II BLE Adapter MAC (AAWG_OBD_BLE_MAC)</label>
-          <input type="text" name="AAWG_OBD_BLE_MAC" id="cfg-obdmac" placeholder="00:1D:A5:XX:XX:XX" maxlength="17">
-        </div>
-        <button type="submit" class="btn" style="width:100%;margin-top:6px;">Save to /boot/aawgd.conf</button>
-      </form>
-    </div>
-  </section>
-
-  <!-- TAB 4: LIVE LOGS -->
-  <section id="tab-logs" class="tab">
-    <div class="card">
-      <h2>System &amp; Handshake Logs</h2>
-      <div class="toolbar">
-        <select id="log-source" onchange="fetchLogs()">
-          <option value="messages">Syslog (/var/log/messages)</option>
-          <option value="car_debug">SD Telemetry (/boot/car_debug.log)</option>
-          <option value="hostapd">Wi-Fi AP (/var/log/hostapd)</option>
-          <option value="dmesg">Kernel Ring Buffer (dmesg)</option>
-        </select>
-        <button class="btn secondary" onclick="fetchLogs()">Refresh</button>
-        <button class="btn secondary" onclick="copyLogs()">Copy</button>
-        <a id="log-download" class="btn" href="/api/v1/logs?source=messages&download=1">Download</a>
       </div>
-      <pre id="log-box" class="log-box">Loading logs...</pre>
-    </div>
-  </section>
-</main>
+    </section>
 
-<div id="toast" class="toast"></div>
+    <!-- TAB 3: CONFIGURATION EDITOR -->
+    <section id="tab-config" class="tab">
+      <div class="card">
+        <h2>/boot/aawgd.conf Editor</h2>
+        <form id="cfg-form" onsubmit="saveConfig(event)">
+          <div class="form-row">
+            <label>5 GHz Wi-Fi SSID (AAWG_WIFI_SSID)</label>
+            <input type="text" name="AAWG_WIFI_SSID" id="cfg-ssid" required maxlength="32">
+          </div>
+          <div class="form-row">
+            <label>Bluetooth Alias (AAWG_BLUETOOTH_NAME)</label>
+            <input type="text" name="AAWG_BLUETOOTH_NAME" id="cfg-btname" required maxlength="32">
+          </div>
+          <div class="form-row">
+            <label>Country Code (AAWG_COUNTRY_CODE)</label>
+            <input type="text" name="AAWG_COUNTRY_CODE" id="cfg-country" required maxlength="2">
+          </div>
+          <div class="form-row">
+            <label>Connection Strategy (AAWG_CONNECTION_STRATEGY)</label>
+            <select name="AAWG_CONNECTION_STRATEGY" id="cfg-strategy">
+              <option value="1">1 — Phone First (Default)</option>
+              <option value="2">2 — USB First</option>
+              <option value="0">0 — Dongle Mode (BLE Advertising)</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Early USB Version Exchange (AAWG_EARLY_USB_VERSION_EXCHANGE)</label>
+            <select name="AAWG_EARLY_USB_VERSION_EXCHANGE" id="cfg-early">
+              <option value="0">0 — Disabled (Recommended)</option>
+              <option value="1">1 — Enabled</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Boot Debug Telemetry (/boot/car_debug.log)</label>
+            <small>Captures 6 snapshots over the first 90s then stops automatically.</small>
+            <select name="AAWG_ENABLE_DEBUG_LOG" id="cfg-debug">
+              <option value="1">1 — Enabled</option>
+              <option value="0">0 — Disabled</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Local Web Control Portal (AAWG_ENABLE_WEB_PORTAL)</label>
+            <select name="AAWG_ENABLE_WEB_PORTAL" id="cfg-web">
+              <option value="1">1 — Enabled</option>
+              <option value="0">0 — Disabled</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>SSH Diagnostic Access over eth0 (AAWG_ENABLE_SSH)</label>
+            <select name="AAWG_ENABLE_SSH" id="cfg-ssh">
+              <option value="0">0 — Disabled (Saves Power in Car)</option>
+              <option value="1">1 — Enabled</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>OBD-II BLE Telemetry (AAWG_ENABLE_OBD_TELEMETRY)</label>
+            <select name="AAWG_ENABLE_OBD_TELEMETRY" id="cfg-obd">
+              <option value="0">0 — Disabled</option>
+              <option value="1">1 — Enabled</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>OBD-II BLE Adapter MAC (AAWG_OBD_BLE_MAC)</label>
+            <input type="text" name="AAWG_OBD_BLE_MAC" id="cfg-obdmac" placeholder="00:1D:A5:XX:XX:XX" maxlength="17">
+          </div>
+          <button type="submit" class="btn" style="width:100%;margin-top:6px;">Save to /boot/aawgd.conf</button>
+        </form>
+      </div>
+    </section>
 
-<script>
-let currentTab = 'status';
+    <!-- TAB 4: LIVE LOGS -->
+    <section id="tab-logs" class="tab">
+      <div class="card">
+        <h2>System &amp; Handshake Logs</h2>
+        <div class="toolbar">
+          <select id="log-source" onchange="fetchLogs()">
+            <option value="messages">Syslog (/var/log/messages)</option>
+            <option value="car_debug">SD Telemetry (/boot/car_debug.log)</option>
+            <option value="hostapd">Wi-Fi AP (/var/log/hostapd)</option>
+            <option value="dmesg">Kernel Ring Buffer (dmesg)</option>
+          </select>
+          <button class="btn secondary" onclick="fetchLogs()">Refresh</button>
+          <button class="btn secondary" onclick="copyLogs()">Copy</button>
+          <a id="log-download" class="btn" href="/api/v1/logs?source=messages&download=1">Download</a>
+        </div>
+        <pre id="log-box" class="log-box">Loading logs...</pre>
+      </div>
+    </section>
+  </main>
 
-function showToast(msg) {
-  const el = document.getElementById('toast');
-  el.textContent = msg;
-  el.style.display = 'block';
-  clearTimeout(window._toastTimer);
-  window._toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3500);
-}
+  <div id="toast" class="toast"></div>
 
-function switchTab(tab, btn) {
-  currentTab = tab;
-  document.querySelectorAll('.tab').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
-  document.getElementById('tab-' + tab).classList.add('active');
-  btn.classList.add('active');
-  if (tab === 'config') loadConfig();
-  if (tab === 'logs') fetchLogs();
-}
+  <script>
+    let currentTab = 'status';
 
-function fmtUptime(sec) {
-  const s = Math.floor(sec || 0);
-  const m = Math.floor(s / 60);
-  const h = Math.floor(m / 60);
-  if (h > 0) return h + 'h ' + (m % 60) + 'm';
-  if (m > 0) return m + 'm ' + (s % 60) + 's';
-  return s + 's';
-}
-
-async function fetchStatus() {
-  try {
-    const res = await fetch('/api/v1/status');
-    const d = await res.json();
-    if (!d.ok) return;
-
-    const dot = document.getElementById('hdr-dot');
-    dot.className = 'dot ' + (d.tcp_proxy_active ? 'ok' : (d.aawgd_running ? 'warn' : 'err'));
-    document.getElementById('hdr-sub').textContent =
-      (d.tcp_proxy_active ? 'AA Active' : 'Standby') + ' • ' + d.soc_temp_c.toFixed(1) + '°C';
-
-    document.getElementById('st-proxy').innerHTML = d.tcp_proxy_active
-      ? '<span class="badge ok">Forwarding</span>'
-      : '<span class="badge warn">Waiting for Phone</span>';
-    document.getElementById('st-aawgd').innerHTML = d.aawgd_running
-      ? '<span class="badge ok">Running</span>'
-      : '<span class="badge err">Stopped</span>';
-    document.getElementById('st-udc').textContent = d.udc_state + ' (' + d.udc_speed + ')';
-    document.getElementById('st-gadget').textContent = d.active_gadget;
-    document.getElementById('st-temp').textContent = d.soc_temp_c.toFixed(1) + ' °C';
-    document.getElementById('st-cpu').textContent = d.cpu_freq_mhz + ' MHz • ' + (d.load_avg.split(' ')[0] || '');
-    document.getElementById('st-uv').innerHTML = d.undervoltage_events === 0
-      ? '<span class="badge ok">0 Brownouts</span>'
-      : '<span class="badge err">' + d.undervoltage_events + ' Events</span>';
-    document.getElementById('st-uptime').textContent =
-      fmtUptime(d.uptime_sec) + ' • ' + Math.round((d.mem_available_kb || 0) / 1024) + ' MB free';
-
-    const tbody = document.getElementById('st-leases');
-    if (d.dhcp_leases && d.dhcp_leases.length > 0) {
-      tbody.innerHTML = d.dhcp_leases.map(l =>
-        '<tr><td>' + l.ip + '</td><td>' + l.hostname + '</td><td>' + l.mac + '</td></tr>'
-      ).join('');
-    } else {
-      tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted);">No active DHCP leases</td></tr>';
+    function showToast(msg) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.style.display = 'block';
+      clearTimeout(window._toastTimer);
+      window._toastTimer = setTimeout(() => { el.style.display = 'none'; }, 3500);
     }
 
-    if (d.gte_telemetry) {
-      const g = d.gte_telemetry;
-      document.getElementById('gte-banner').textContent =
-        'Drive Mode: ' + (g.drive_mode || '-') + ' • Updated: ' + (g.timestamp_utc || 'live');
-      document.getElementById('gte-soc').textContent =
-        (g.hv_soc_display_pct ?? '-') + '% / ' + (g.hv_soc_gross_pct ?? '-') + '%';
-      document.getElementById('gte-power').textContent = (g.hv_power_kw ?? '-') + ' kW';
-      document.getElementById('gte-vi').textContent =
-        (g.hv_voltage_v ?? '-') + ' V / ' + (g.hv_current_a ?? '-') + ' A';
-      document.getElementById('gte-hvtemp').textContent =
-        (g.hv_temp_min_c ?? '-') + '°C / ' + (g.hv_temp_max_c ?? '-') + '°C';
-      document.getElementById('gte-ice').textContent =
-        (g.ice_rpm ?? 0) + ' RPM / ' + (g.ice_oil_c ?? '-') + '°C';
-      document.getElementById('gte-12v').textContent = (g.aux_12v_v ?? '-') + ' V';
+    function switchTab(tab, btn) {
+      currentTab = tab;
+      document.querySelectorAll('.tab').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+      document.getElementById('tab-' + tab).classList.add('active');
+      btn.classList.add('active');
+      if (tab === 'config') loadConfig();
+      if (tab === 'logs') fetchLogs();
     }
-  } catch (e) {
-    document.getElementById('hdr-dot').className = 'dot err';
-    document.getElementById('hdr-sub').textContent = 'Offline';
-  }
-}
 
-async function loadConfig() {
-  try {
-    const res = await fetch('/api/v1/config');
-    const d = await res.json();
-    if (!d.ok || !d.config) return;
-    const c = d.config;
-    document.getElementById('cfg-ssid').value = c.AAWG_WIFI_SSID || 'futedongle';
-    document.getElementById('cfg-btname').value = c.AAWG_BLUETOOTH_NAME || 'futedongle';
-    document.getElementById('cfg-country').value = c.AAWG_COUNTRY_CODE || 'ES';
-    document.getElementById('cfg-strategy').value = c.AAWG_CONNECTION_STRATEGY || '1';
-    document.getElementById('cfg-early').value = c.AAWG_EARLY_USB_VERSION_EXCHANGE || '0';
-    document.getElementById('cfg-debug').value = c.AAWG_ENABLE_DEBUG_LOG || '1';
-    document.getElementById('cfg-web').value = c.AAWG_ENABLE_WEB_PORTAL || '1';
-    document.getElementById('cfg-ssh').value = c.AAWG_ENABLE_SSH || '0';
-    document.getElementById('cfg-obd').value = c.AAWG_ENABLE_OBD_TELEMETRY || '0';
-    document.getElementById('cfg-obdmac').value = c.AAWG_OBD_BLE_MAC || '';
-  } catch (e) {
-    showToast('Failed to load configuration');
-  }
-}
+    function fmtUptime(sec) {
+      const s = Math.floor(sec || 0);
+      const m = Math.floor(s / 60);
+      const h = Math.floor(m / 60);
+      if (h > 0) return h + 'h ' + (m % 60) + 'm';
+      if (m > 0) return m + 'm ' + (s % 60) + 's';
+      return s + 's';
+    }
 
-async function saveConfig(ev) {
-  ev.preventDefault();
-  const form = document.getElementById('cfg-form');
-  const body = new URLSearchParams(new FormData(form)).toString();
-  try {
-    const res = await fetch('/api/v1/config', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-      body
-    });
-    const d = await res.json();
-    showToast(d.ok ? d.message : ('Error: ' + d.error));
-  } catch (e) {
-    showToast('Failed to save configuration');
-  }
-}
+    async function fetchStatus() {
+      try {
+        const res = await fetch('/api/v1/status');
+        const d = await res.json();
+        if (!d.ok) return;
 
-async function runAction(action) {
-  try {
-    const res = await fetch('/api/v1/actions', {
-      method: 'POST',
-      headers: {'Content-Type': 'application/x-www-form-urlencoded'},
-      body: 'action=' + encodeURIComponent(action)
-    });
-    const d = await res.json();
-    showToast(d.ok ? d.message : ('Error: ' + d.error));
-  } catch (e) {
-    showToast('Action triggered');
-  }
-}
+        const dot = document.getElementById('hdr-dot');
+        dot.className = 'dot ' + (d.tcp_proxy_active ? 'ok' : (d.aawgd_running ? 'warn' : 'err'));
+        document.getElementById('hdr-sub').textContent =
+          (d.tcp_proxy_active ? 'AA Active' : 'Standby') + ' • ' + d.soc_temp_c.toFixed(1) + '°C';
 
-function confirmReboot() {
-  if (confirm('Reboot futedongle now?')) {
-    runAction('reboot');
-  }
-}
+        document.getElementById('st-proxy').innerHTML = d.tcp_proxy_active
+          ? '<span class="badge ok">Forwarding</span>'
+          : '<span class="badge warn">Waiting for Phone</span>';
+        document.getElementById('st-aawgd').innerHTML = d.aawgd_running
+          ? '<span class="badge ok">Running</span>'
+          : '<span class="badge err">Stopped</span>';
+        document.getElementById('st-udc').textContent = d.udc_state + ' (' + d.udc_speed + ')';
+        document.getElementById('st-gadget').textContent = d.active_gadget;
+        document.getElementById('st-temp').textContent = d.soc_temp_c.toFixed(1) + ' °C';
+        document.getElementById('st-cpu').textContent = d.cpu_freq_mhz + ' MHz • ' + (d.load_avg.split(' ')[0] || '');
+        document.getElementById('st-uv').innerHTML = d.undervoltage_events === 0
+          ? '<span class="badge ok">0 Brownouts</span>'
+          : '<span class="badge err">' + d.undervoltage_events + ' Events</span>';
+        document.getElementById('st-uptime').textContent =
+          fmtUptime(d.uptime_sec) + ' • ' + Math.round((d.mem_available_kb || 0) / 1024) + ' MB free';
 
-async function fetchLogs() {
-  const src = document.getElementById('log-source').value;
-  document.getElementById('log-download').href = '/api/v1/logs?source=' + encodeURIComponent(src) + '&download=1';
-  const box = document.getElementById('log-box');
-  try {
-    const res = await fetch('/api/v1/logs?source=' + encodeURIComponent(src) + '&lines=250');
-    const d = await res.json();
-    box.textContent = d.ok ? (d.content || '(empty)') : ('Error: ' + d.error);
-    box.scrollTop = box.scrollHeight;
-  } catch (e) {
-    box.textContent = 'Failed to fetch logs.';
-  }
-}
+        const tbody = document.getElementById('st-leases');
+        if (d.dhcp_leases && d.dhcp_leases.length > 0) {
+          tbody.innerHTML = d.dhcp_leases.map(l =>
+            '<tr><td>' + l.ip + '</td><td>' + l.hostname + '</td><td>' + l.mac + '</td></tr>'
+          ).join('');
+        } else {
+          tbody.innerHTML = '<tr><td colspan="3" style="color:var(--muted);">No active DHCP leases</td></tr>';
+        }
 
-function copyLogs() {
-  const text = document.getElementById('log-box').textContent;
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(text).then(() => showToast('Logs copied to clipboard'));
-  }
-}
+        if (d.gte_telemetry) {
+          const g = d.gte_telemetry;
+          document.getElementById('gte-banner').textContent =
+            'Drive Mode: ' + (g.drive_mode || '-') + ' • Updated: ' + (g.timestamp_utc || 'live');
+          document.getElementById('gte-soc').textContent =
+            (g.hv_soc_display_pct ?? '-') + '% / ' + (g.hv_soc_gross_pct ?? '-') + '%';
+          document.getElementById('gte-power').textContent = (g.hv_power_kw ?? '-') + ' kW';
+          document.getElementById('gte-vi').textContent =
+            (g.hv_voltage_v ?? '-') + ' V / ' + (g.hv_current_a ?? '-') + ' A';
+          document.getElementById('gte-hvtemp').textContent =
+            (g.hv_temp_min_c ?? '-') + '°C / ' + (g.hv_temp_max_c ?? '-') + '°C';
+          document.getElementById('gte-ice').textContent =
+            (g.ice_rpm ?? 0) + ' RPM / ' + (g.ice_oil_c ?? '-') + '°C';
+          document.getElementById('gte-12v').textContent = (g.aux_12v_v ?? '-') + ' V';
+        }
+      } catch (e) {
+        document.getElementById('hdr-dot').className = 'dot err';
+        document.getElementById('hdr-sub').textContent = 'Offline';
+      }
+    }
 
-fetchStatus();
-setInterval(() => {
-  if (currentTab === 'status' || currentTab === 'gte') fetchStatus();
-}, 3000);
-</script>
+    async function loadConfig() {
+      try {
+        const res = await fetch('/api/v1/config');
+        const d = await res.json();
+        if (!d.ok || !d.config) return;
+        const c = d.config;
+        document.getElementById('cfg-ssid').value = c.AAWG_WIFI_SSID || 'futedongle';
+        document.getElementById('cfg-btname').value = c.AAWG_BLUETOOTH_NAME || 'futedongle';
+        document.getElementById('cfg-country').value = c.AAWG_COUNTRY_CODE || 'ES';
+        document.getElementById('cfg-strategy').value = c.AAWG_CONNECTION_STRATEGY || '1';
+        document.getElementById('cfg-early').value = c.AAWG_EARLY_USB_VERSION_EXCHANGE || '0';
+        document.getElementById('cfg-debug').value = c.AAWG_ENABLE_DEBUG_LOG || '1';
+        document.getElementById('cfg-web').value = c.AAWG_ENABLE_WEB_PORTAL || '1';
+        document.getElementById('cfg-ssh').value = c.AAWG_ENABLE_SSH || '0';
+        document.getElementById('cfg-obd').value = c.AAWG_ENABLE_OBD_TELEMETRY || '0';
+        document.getElementById('cfg-obdmac').value = c.AAWG_OBD_BLE_MAC || '';
+      } catch (e) {
+        showToast('Failed to load configuration');
+      }
+    }
+
+    async function saveConfig(ev) {
+      ev.preventDefault();
+      const form = document.getElementById('cfg-form');
+      const body = new URLSearchParams(new FormData(form)).toString();
+      try {
+        const res = await fetch('/api/v1/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body
+        });
+        const d = await res.json();
+        showToast(d.ok ? d.message : ('Error: ' + d.error));
+      } catch (e) {
+        showToast('Failed to save configuration');
+      }
+    }
+
+    async function runAction(action) {
+      try {
+        const res = await fetch('/api/v1/actions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'action=' + encodeURIComponent(action)
+        });
+        const d = await res.json();
+        showToast(d.ok ? d.message : ('Error: ' + d.error));
+      } catch (e) {
+        showToast('Action triggered');
+      }
+    }
+
+    function confirmReboot() {
+      if (confirm('Reboot futedongle now?')) {
+        runAction('reboot');
+      }
+    }
+
+    async function fetchLogs() {
+      const src = document.getElementById('log-source').value;
+      document.getElementById('log-download').href = '/api/v1/logs?source=' + encodeURIComponent(src) + '&download=1';
+      const box = document.getElementById('log-box');
+      try {
+        const res = await fetch('/api/v1/logs?source=' + encodeURIComponent(src) + '&lines=250');
+        const d = await res.json();
+        box.textContent = d.ok ? (d.content || '(empty)') : ('Error: ' + d.error);
+        box.scrollTop = box.scrollHeight;
+      } catch (e) {
+        box.textContent = 'Failed to fetch logs.';
+      }
+    }
+
+    function copyLogs() {
+      const text = document.getElementById('log-box').textContent;
+      if (navigator.clipboard) {
+        navigator.clipboard.writeText(text).then(() => showToast('Logs copied to clipboard'));
+      }
+    }
+
+    fetchStatus();
+    setInterval(() => {
+      if (currentTab === 'status' || currentTab === 'gte') fetchStatus();
+    }, 3000);
+  </script>
 </body>
-</html>
 
+</html>
