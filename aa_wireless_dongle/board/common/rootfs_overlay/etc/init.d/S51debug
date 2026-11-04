@@ -21,35 +21,45 @@ case "$1" in
 			fi
 		fi
 
+		# Stop redundant background daemons (BCM2711 has hardware iproc-rng200 and no cron jobs are used)
+		/etc/init.d/S21rngd stop >/dev/null 2>&1 || true
+		/etc/init.d/S50crond stop >/dev/null 2>&1 || true
+
 		# Launch bounded boot/handshake telemetry (6 snapshots x 15s = 90s) only when AAWG_ENABLE_DEBUG_LOG=1
 		if [ "$AAWG_ENABLE_DEBUG_LOG" = "1" ]; then
 			(
+				rm -f /var/log/car_snapshots.tmp
 				SNAPSHOT=0
 				while [ "$SNAPSHOT" -lt 6 ]; do
 					sleep 15
 					SNAPSHOT=$((SNAPSHOT + 1))
+					{
+						echo "=== CAR TELEMETRY ($SNAPSHOT/6) $(date) ==="
+						uptime
+						echo "--- USB UDC & GADGET STATE ---"
+						for f in /sys/class/udc/*/state /sys/class/udc/*/current_speed /sys/class/udc/*/function /sys/kernel/config/usb_gadget/*/UDC; do
+							[ -e "$f" ] && echo "$f: $(cat "$f" 2>/dev/null)"
+						done
+						echo "--- BLUETOOTH & RFKILL ---"
+						/usr/sbin/rfkill list 2>/dev/null || true
+						/usr/bin/bluetoothctl show 2>/dev/null || true
+						echo "Devices:"
+						/usr/bin/bluetoothctl devices 2>/dev/null || true
+						echo "Paired:"
+						/usr/bin/bluetoothctl devices Paired 2>/dev/null || true
+						echo "Trusted:"
+						/usr/bin/bluetoothctl devices Trusted 2>/dev/null || true
+						echo "Connected:"
+						/usr/bin/bluetoothctl devices Connected 2>/dev/null || true
+						echo "--- NETWORK & DHCP LEASES ---"
+						/sbin/ip addr 2>/dev/null || true
+						cat /var/lib/misc/dnsmasq.leases 2>/dev/null || true
+						echo ""
+					} >> /var/log/car_snapshots.tmp 2>&1
+
 					if /bin/mount -o remount,rw /boot 2>/dev/null; then
 						{
-							echo "=== CAR TELEMETRY ($SNAPSHOT/6) $(date) ==="
-							uptime
-							echo "--- USB UDC & GADGET STATE ---"
-							for f in /sys/class/udc/*/state /sys/class/udc/*/current_speed /sys/class/udc/*/function /sys/kernel/config/usb_gadget/*/UDC; do
-								[ -e "$f" ] && echo "$f: $(cat "$f" 2>/dev/null)"
-							done
-							echo "--- BLUETOOTH & RFKILL ---"
-							/usr/sbin/rfkill list 2>/dev/null || true
-							/usr/bin/bluetoothctl show 2>/dev/null || true
-							echo "Devices:"
-							/usr/bin/bluetoothctl devices 2>/dev/null || true
-							echo "Paired:"
-							/usr/bin/bluetoothctl devices Paired 2>/dev/null || true
-							echo "Trusted:"
-							/usr/bin/bluetoothctl devices Trusted 2>/dev/null || true
-							echo "Connected:"
-							/usr/bin/bluetoothctl devices Connected 2>/dev/null || true
-							echo "--- NETWORK & DHCP LEASES ---"
-							/sbin/ip addr 2>/dev/null || true
-							cat /var/lib/misc/dnsmasq.leases 2>/dev/null || true
+							cat /var/log/car_snapshots.tmp 2>/dev/null || true
 							echo "--- PROCESSES ---"
 							/bin/ps
 							echo "--- HOSTAPD CONF ---"
