@@ -165,7 +165,9 @@ void AAWirelessProfile::NewConnection(DBus::Path path, std::shared_ptr<DBus::Fil
     Logger::instance()->info("AA Wireless NewConnection\n");
     Logger::instance()->info("Path: %s, fd: %d\n", path.c_str(), fd->descriptor());
 
+    BluetoothHandler::instance().notifyHandoffStarted();
     AAWirelessLauncher(fd->descriptor()).launch();
+    BluetoothHandler::instance().notifyHandoffStarted();
     Logger::instance()->info("Bluetooth launch sequence completed\n");
 }
 

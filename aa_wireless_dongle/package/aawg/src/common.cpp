@@ -54,6 +54,27 @@ std::string Config::getUniqueSuffix() {
     return serialNumber.substr(serialNumber.size() - 6);
 }
 
+std::string Config::getBluetoothName() {
+    std::string btName = getenv("AAWG_BLUETOOTH_NAME", "futedongle");
+    if (btName.empty()) {
+        btName = "futedongle";
+    }
+
+    std::string uniqueSuffix = getenv("AAWG_UNIQUE_NAME_SUFFIX", "");
+    if (!uniqueSuffix.empty()) {
+        btName += "-" + uniqueSuffix;
+    }
+
+    if (getConnectionStrategy() == ConnectionStrategy::DONGLE_MODE) {
+        const std::string donglePrefix = "AndroidAuto-";
+        if (btName.rfind(donglePrefix, 0) != 0) {
+            btName = donglePrefix + btName;
+        }
+    }
+
+    return btName;
+}
+
 WifiInfo Config::getWifiInfo() {
     std::string wifiPassword = getenv("AAWG_WIFI_PASSWORD", "");
     if (wifiPassword.empty()) {

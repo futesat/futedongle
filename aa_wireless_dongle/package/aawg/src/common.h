@@ -32,6 +32,7 @@ public:
     bool getEarlyUsbVersionExchange();
 
     std::string getUniqueSuffix();
+    std::string getBluetoothName();
 private:
     Config() = default;
 

@@ -39,6 +39,14 @@ case "$1" in
 							echo "--- BLUETOOTH & RFKILL ---"
 							/usr/sbin/rfkill list 2>/dev/null || true
 							/usr/bin/bluetoothctl show 2>/dev/null || true
+							echo "Devices:"
+							/usr/bin/bluetoothctl devices 2>/dev/null || true
+							echo "Paired:"
+							/usr/bin/bluetoothctl devices Paired 2>/dev/null || true
+							echo "Trusted:"
+							/usr/bin/bluetoothctl devices Trusted 2>/dev/null || true
+							echo "Connected:"
+							/usr/bin/bluetoothctl devices Connected 2>/dev/null || true
 							echo "--- NETWORK & DHCP LEASES ---"
 							/sbin/ip addr 2>/dev/null || true
 							cat /var/lib/misc/dnsmasq.leases 2>/dev/null || true

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <atomic>
+#include <cstdint>
 #include <optional>
 #include <thread>
 
@@ -20,6 +22,7 @@ public:
 
     std::optional<std::thread> connectWithRetry();
     void stopConnectWithRetry();
+    void notifyHandoffStarted();
 
 private:
     BluetoothHandler() {};
@@ -40,6 +43,8 @@ private:
     void retryConnectLoop();
 
     std::shared_ptr<std::promise<void>> connectWithRetryPromise;
+    std::atomic<int64_t> m_lastHandoffTimestampMs{0};
+    bool m_triedDirectConnect{false};
 
     std::shared_ptr<DBus::Dispatcher> m_dispatcher;
     std::shared_ptr<DBus::Connection> m_connection;
