@@ -52,6 +52,10 @@ UsbManager::UsbManager() {
 void UsbManager::writeGadgetFile(std::string gadgetName, std::string relativeFilePath, const char* content) {
     std::string gadgetFilePath = "/sys/kernel/config/usb_gadget/" + gadgetName + "/" + relativeFilePath;
     FILE* gadgetFile = fopen(gadgetFilePath.c_str(), "w");
+    if (gadgetFile == NULL) {
+        Logger::instance()->info("USB Manager: Error opening %s: %s\n", gadgetFilePath.c_str(), strerror(errno));
+        return;
+    }
     fputs(content, gadgetFile);
     fputc('\n', gadgetFile);
     fclose(gadgetFile);
