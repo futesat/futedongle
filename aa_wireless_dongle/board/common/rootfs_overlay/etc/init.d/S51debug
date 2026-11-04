@@ -57,23 +57,25 @@ case "$1" in
 						echo ""
 					} >> /var/log/car_snapshots.tmp 2>&1
 
-					if /bin/mount -o remount,rw /boot 2>/dev/null; then
-						{
-							cat /var/log/car_snapshots.tmp 2>/dev/null || true
-							echo "--- PROCESSES ---"
-							/bin/ps
-							echo "--- HOSTAPD CONF ---"
-							grep -v "^wpa_passphrase=" /var/run/hostapd.conf 2>/dev/null || true
-							echo "--- HOSTAPD LOG ---"
-							cat /var/log/hostapd 2>/dev/null || true
-							echo "--- FULL SYSLOG (/var/log/messages) ---"
-							cat /var/log/messages 2>/dev/null || true
-							echo "--- DMESG ---"
-							/bin/dmesg 2>/dev/null || true
-						} > /boot/car_debug.log 2>&1
-						sync
-						/bin/mount -o remount,ro /boot 2>/dev/null || true
-					fi
+					flock -x /var/run/boot_mount.lock -c '
+						if /bin/mount -o remount,rw /boot 2>/dev/null; then
+							{
+								cat /var/log/car_snapshots.tmp 2>/dev/null || true
+								echo "--- PROCESSES ---"
+								/bin/ps
+								echo "--- HOSTAPD CONF ---"
+								grep -v "^wpa_passphrase=" /var/run/hostapd.conf 2>/dev/null || true
+								echo "--- HOSTAPD LOG ---"
+								cat /var/log/hostapd 2>/dev/null || true
+								echo "--- FULL SYSLOG (/var/log/messages) ---"
+								cat /var/log/messages 2>/dev/null || true
+								echo "--- DMESG ---"
+								/bin/dmesg 2>/dev/null || true
+							} > /boot/car_debug.log 2>&1
+							sync
+							/bin/mount -o remount,ro /boot 2>/dev/null || true
+						fi
+					'
 				done
 				rm -f /var/run/car_logger.pid
 			) </dev/null >/dev/null 2>&1 &

@@ -1,5 +1,7 @@
-.PHONY: clean
+.PHONY: all clean
 .SECONDARY:
+
+all: aawgd futedongle_web
 
 EXTRA_CXXFLAGS += $(shell $(PKG_CONFIG) --cflags --libs dbus-cxx-2.0 protobuf-lite)
 
@@ -10,6 +12,9 @@ ALL_HEADERS = $(wildcard *.h) $(PROTO_HEADERS)
 
 aawgd: aawgd.o bluetoothHandler.o bluetoothProfiles.o bluetoothAdvertisement.o proxyHandler.o uevent.o usb.o common.o proto/WifiInfoResponse.pb.o proto/WifiStartRequest.pb.o
 	$(CXX) $(CXXFLAGS) $(EXTRA_CXXFLAGS) -o '$@' $^
+
+futedongle_web: webPortal.cpp
+	$(CXX) $(CXXFLAGS) -std=c++17 -O2 -o '$@' '$<'
 
 %.o: %.cpp
 %.o: %.cpp $(ALL_HEADERS)
@@ -22,4 +27,4 @@ proto/%.pb.cc proto/%.pb.h: proto/%.proto
 	cd $(<D) && $(PROTOC) --cpp_out=. $*.proto
 
 clean:
-	-rm aawgd
+	-rm -f aawgd futedongle_web *.o proto/*.pb.*
