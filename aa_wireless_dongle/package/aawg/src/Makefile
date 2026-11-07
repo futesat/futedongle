@@ -1,7 +1,7 @@
 .PHONY: all clean
 .SECONDARY:
 
-all: aawgd futedongle_web
+all: aawgd futedongle_web garage_udp_send
 
 EXTRA_CXXFLAGS += $(shell $(PKG_CONFIG) --cflags --libs dbus-cxx-2.0 protobuf-lite)
 
@@ -16,6 +16,9 @@ aawgd: aawgd.o bluetoothHandler.o bluetoothProfiles.o bluetoothAdvertisement.o p
 futedongle_web: webPortal.cpp
 	$(CXX) $(CXXFLAGS) -std=c++17 -O2 -o '$@' '$<'
 
+garage_udp_send: garageUdpSend.cpp
+	$(CXX) $(CXXFLAGS) -std=c++17 -O2 -o '$@' '$<'
+
 %.o: %.cpp
 %.o: %.cpp $(ALL_HEADERS)
 	$(CXX) $(CXXFLAGS) $(EXTRA_CXXFLAGS) -c -o '$@' '$<'
@@ -27,4 +30,4 @@ proto/%.pb.cc proto/%.pb.h: proto/%.proto
 	cd $(<D) && $(PROTOC) --cpp_out=. $*.proto
 
 clean:
-	-rm -f aawgd futedongle_web *.o proto/*.pb.*
+	-rm -f aawgd futedongle_web garage_udp_send *.o proto/*.pb.*

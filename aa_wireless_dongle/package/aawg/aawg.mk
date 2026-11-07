@@ -10,6 +10,7 @@ endef
 define AAWG_INSTALL_TARGET_CMDS
     $(INSTALL) -D -m 0755 $(@D)/aawgd  $(TARGET_DIR)/usr/bin
     $(INSTALL) -D -m 0755 $(@D)/futedongle_web  $(TARGET_DIR)/usr/bin
+    $(INSTALL) -D -m 0755 $(@D)/garage_udp_send  $(TARGET_DIR)/usr/bin
 endef
 
 $(eval $(generic-package))
