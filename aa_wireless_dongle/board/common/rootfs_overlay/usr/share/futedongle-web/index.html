@@ -233,6 +233,8 @@
     }
 
     input[type="text"],
+    input[type="password"],
+    input[type="number"],
     select {
       width: 100%;
       background: #0b0f17;
@@ -241,6 +243,36 @@
       color: var(--text);
       padding: 9px 11px;
       font-size: 0.9rem;
+    }
+
+    .input-group {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    .input-group input {
+      flex: 1;
+    }
+
+    .section-divider {
+      border-top: 1px solid var(--border);
+      margin: 18px 0 12px;
+      padding-top: 14px;
+    }
+
+    .section-divider h3 {
+      font-size: 0.84rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--accent);
+      margin-bottom: 4px;
+    }
+
+    .section-divider p {
+      font-size: 0.76rem;
+      color: var(--muted);
+      margin-bottom: 10px;
     }
 
     pre.log-box {
@@ -446,6 +478,14 @@
             <input type="text" name="AAWG_WIFI_SSID" id="cfg-ssid" required maxlength="32">
           </div>
           <div class="form-row">
+            <label>5 GHz Wi-Fi Password (AAWG_WIFI_PASSWORD)</label>
+            <small>Fixed WPA2 passphrase (8–63 characters) so the phone reconnects automatically across reboots.</small>
+            <div class="input-group">
+              <input type="password" name="AAWG_WIFI_PASSWORD" id="cfg-wifipass" required minlength="8" maxlength="63" autocomplete="off">
+              <button type="button" class="btn secondary" onclick="toggleSecret('cfg-wifipass', this)">Show</button>
+            </div>
+          </div>
+          <div class="form-row">
             <label>Bluetooth Alias (AAWG_BLUETOOTH_NAME)</label>
             <input type="text" name="AAWG_BLUETOOTH_NAME" id="cfg-btname" required maxlength="32">
           </div>
@@ -472,8 +512,8 @@
             <label>Boot Debug Telemetry (/boot/car_debug.log)</label>
             <small>Captures 6 snapshots over the first 90s then stops automatically.</small>
             <select name="AAWG_ENABLE_DEBUG_LOG" id="cfg-debug">
+              <option value="0">0 — Disabled (Production Default)</option>
               <option value="1">1 — Enabled</option>
-              <option value="0">0 — Disabled</option>
             </select>
           </div>
           <div class="form-row">
@@ -489,6 +529,66 @@
               <option value="0">0 — Disabled (Saves Power in Car)</option>
               <option value="1">1 — Enabled</option>
             </select>
+          </div>
+
+          <div class="section-divider">
+            <h3>Boot-Time Garage Door Opener (S38garage_opener)</h3>
+            <p>Connects briefly on USB power-up to a garage Wi-Fi AP, sends a UDP datagram, and restores clean 5 GHz Android Auto AP mode.</p>
+          </div>
+          <div class="form-row">
+            <label>Garage Opener on Power-Up (AAWG_ENABLE_GARAGE_OPEN)</label>
+            <select name="AAWG_ENABLE_GARAGE_OPEN" id="cfg-garage-en">
+              <option value="1">1 — Enabled</option>
+              <option value="0">0 — Disabled</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Garage Wi-Fi SSID (AAWG_GARAGE_WIFI_SSID)</label>
+            <input type="text" name="AAWG_GARAGE_WIFI_SSID" id="cfg-garage-ssid" placeholder="COMARCA" maxlength="32">
+          </div>
+          <div class="form-row">
+            <label>Garage SSID Visibility (AAWG_GARAGE_WIFI_HIDDEN)</label>
+            <select name="AAWG_GARAGE_WIFI_HIDDEN" id="cfg-garage-hidden">
+              <option value="1">1 — Hidden SSID (Active Probe Scan)</option>
+              <option value="0">0 — Broadcast SSID</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Garage Wi-Fi Band Scan (AAWG_GARAGE_WIFI_BAND)</label>
+            <select name="AAWG_GARAGE_WIFI_BAND" id="cfg-garage-band">
+              <option value="2.4">2.4 — 2.4 GHz Channels 1–13 Only (Fastest)</option>
+              <option value="all">all — Scan 2.4 GHz + 5 GHz</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Garage Wi-Fi Password (AAWG_GARAGE_WIFI_PASSWORD)</label>
+            <small>Leave empty for an open network, or enter an 8–63 character WPA2 passphrase.</small>
+            <div class="input-group">
+              <input type="password" name="AAWG_GARAGE_WIFI_PASSWORD" id="cfg-garage-pass" maxlength="63" autocomplete="off">
+              <button type="button" class="btn secondary" onclick="toggleSecret('cfg-garage-pass', this)">Show</button>
+            </div>
+          </div>
+          <div class="form-row">
+            <label>Garage UDP Target Host / IP (AAWG_GARAGE_UDP_HOST)</label>
+            <input type="text" name="AAWG_GARAGE_UDP_HOST" id="cfg-garage-host" placeholder="192.168.1.9" maxlength="64">
+          </div>
+          <div class="form-row">
+            <label>Garage UDP Target Port (AAWG_GARAGE_UDP_PORT)</label>
+            <input type="number" name="AAWG_GARAGE_UDP_PORT" id="cfg-garage-port" min="1" max="65535" required>
+          </div>
+          <div class="form-row">
+            <label>Garage UDP Payload (AAWG_GARAGE_UDP_PAYLOAD)</label>
+            <small>Sent verbatim without a trailing newline (equivalent to echo -n).</small>
+            <input type="text" name="AAWG_GARAGE_UDP_PAYLOAD" id="cfg-garage-payload" placeholder="OPEN_BOTH_GARAGE_FIRST" maxlength="128" required>
+          </div>
+          <div class="form-row">
+            <label>Garage Wi-Fi Association Timeout Seconds (AAWG_GARAGE_TIMEOUT_SEC)</label>
+            <small>Aborts immediately to start Android Auto AP if out of garage Wi-Fi range (2–15s).</small>
+            <input type="number" name="AAWG_GARAGE_TIMEOUT_SEC" id="cfg-garage-timeout" min="2" max="15" required>
+          </div>
+
+          <div class="section-divider">
+            <h3>Passat GTE OBD-II Telemetry</h3>
           </div>
           <div class="form-row">
             <label>OBD-II BLE Telemetry (AAWG_ENABLE_OBD_TELEMETRY)</label>
@@ -615,22 +715,40 @@
       }
     }
 
+    function toggleSecret(inputId, btn) {
+      const el = document.getElementById(inputId);
+      if (!el) return;
+      const show = el.type === 'password';
+      el.type = show ? 'text' : 'password';
+      btn.textContent = show ? 'Hide' : 'Show';
+    }
+
     async function loadConfig() {
       try {
         const res = await fetch('/api/v1/config');
         const d = await res.json();
         if (!d.ok || !d.config) return;
         const c = d.config;
-        document.getElementById('cfg-ssid').value = c.AAWG_WIFI_SSID || 'futedongle';
-        document.getElementById('cfg-btname').value = c.AAWG_BLUETOOTH_NAME || 'futedongle';
-        document.getElementById('cfg-country').value = c.AAWG_COUNTRY_CODE || 'ES';
-        document.getElementById('cfg-strategy').value = c.AAWG_CONNECTION_STRATEGY || '1';
-        document.getElementById('cfg-early').value = c.AAWG_EARLY_USB_VERSION_EXCHANGE || '0';
-        document.getElementById('cfg-debug').value = c.AAWG_ENABLE_DEBUG_LOG || '1';
-        document.getElementById('cfg-web').value = c.AAWG_ENABLE_WEB_PORTAL || '1';
-        document.getElementById('cfg-ssh').value = c.AAWG_ENABLE_SSH || '0';
-        document.getElementById('cfg-obd').value = c.AAWG_ENABLE_OBD_TELEMETRY || '0';
-        document.getElementById('cfg-obdmac').value = c.AAWG_OBD_BLE_MAC || '';
+        document.getElementById('cfg-ssid').value = c.AAWG_WIFI_SSID ?? 'futedongle';
+        document.getElementById('cfg-wifipass').value = c.AAWG_WIFI_PASSWORD ?? 'fute?dongle!';
+        document.getElementById('cfg-btname').value = c.AAWG_BLUETOOTH_NAME ?? 'futedongle';
+        document.getElementById('cfg-country').value = c.AAWG_COUNTRY_CODE ?? 'ES';
+        document.getElementById('cfg-strategy').value = c.AAWG_CONNECTION_STRATEGY ?? '1';
+        document.getElementById('cfg-early').value = c.AAWG_EARLY_USB_VERSION_EXCHANGE ?? '0';
+        document.getElementById('cfg-debug').value = c.AAWG_ENABLE_DEBUG_LOG ?? '0';
+        document.getElementById('cfg-web').value = c.AAWG_ENABLE_WEB_PORTAL ?? '1';
+        document.getElementById('cfg-ssh').value = c.AAWG_ENABLE_SSH ?? '0';
+        document.getElementById('cfg-garage-en').value = c.AAWG_ENABLE_GARAGE_OPEN ?? '1';
+        document.getElementById('cfg-garage-ssid').value = c.AAWG_GARAGE_WIFI_SSID ?? 'COMARCA';
+        document.getElementById('cfg-garage-hidden').value = c.AAWG_GARAGE_WIFI_HIDDEN ?? '1';
+        document.getElementById('cfg-garage-band').value = c.AAWG_GARAGE_WIFI_BAND ?? '2.4';
+        document.getElementById('cfg-garage-pass').value = c.AAWG_GARAGE_WIFI_PASSWORD ?? '';
+        document.getElementById('cfg-garage-host').value = c.AAWG_GARAGE_UDP_HOST ?? '192.168.1.9';
+        document.getElementById('cfg-garage-port').value = c.AAWG_GARAGE_UDP_PORT ?? '9876';
+        document.getElementById('cfg-garage-payload').value = c.AAWG_GARAGE_UDP_PAYLOAD ?? 'OPEN_BOTH_GARAGE_FIRST';
+        document.getElementById('cfg-garage-timeout').value = c.AAWG_GARAGE_TIMEOUT_SEC ?? '5';
+        document.getElementById('cfg-obd').value = c.AAWG_ENABLE_OBD_TELEMETRY ?? '0';
+        document.getElementById('cfg-obdmac').value = c.AAWG_OBD_BLE_MAC ?? '';
       } catch (e) {
         showToast('Failed to load configuration');
       }

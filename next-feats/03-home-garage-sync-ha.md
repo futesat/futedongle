@@ -36,7 +36,22 @@ sequenceDiagram
 
 ---
 
-## 3. Two-Stage Synchronization Protocol
+## 3. Three-Stage Synchronization & Garage Door Protocol
+
+### Stage 0 (Implemented): Boot-Time Departure Trigger over Hidden 2.4 GHz Wi-Fi + UDP (`S38garage_opener`)
+When the driver unlocks/starts the Passat inside the community garage (next to the storage room `trastero` AP), the MIB3 USB-C port supplies 5V power to the Raspberry Pi 4 **before** any Android Auto session begins:
+
+1. **Strict Pre-AP Ordering (`S38` < `S39` < `S40`)**:
+   - `/etc/init.d/S38garage_opener` runs synchronously **before** `S39hostapd_conf` and `S40network` ever touch `wlan0`.
+   - If `hostapd` is already running (`pidof hostapd`), `S38garage_opener` refuses to touch `wlan0` so an active Android Auto session can never be interrupted.
+2. **Fast Hidden-SSID Association (`< 1.5s`)**:
+   - Generates an ephemeral `0600` `/var/run/garage_wpa.conf` (without `ctrl_interface`, matching Buildroot's minimal `wpa_supplicant` v2.11 build) using `scan_ssid=1` and `freq_list` restricted to 2.4 GHz channels 1–13 (`2412..2472 MHz`) when `AAWG_GARAGE_WIFI_BAND=2.4`.
+   - Polls every `100 ms` up to `AAWG_GARAGE_TIMEOUT_SEC` (`5s` default) until both 802.11 association (`iw dev wlan0 link`) and WPA2 4-way key installation (`/sys/class/net/wlan0/carrier == 1`) complete. When parked away from home, it aborts cleanly at `5s` and boots straight into Android Auto AP mode.
+3. **One-Shot Isolated DHCP + ARP-Safe C++ UDP Sender (`/usr/bin/garage_udp_send`)**:
+   - Acquires an ephemeral IPv4 lease via `udhcpc -i wlan0 -n -q -t 3 -T 1` with an isolated hook script (`/var/run/garage_udhcpc.script`) that never modifies `/etc/resolv.conf` and leaves **zero** background DHCP renewal daemons running.
+   - Executes `/usr/bin/garage_udp_send <host> <port> <payload>` (replacing BusyBox `nc`, which is disabled in Buildroot and would otherwise block for `-w5` seconds waiting for a UDP reply). Sends exact payload bytes without a trailing newline, polls `/proc/net/arp` up to `800 ms` so Layer-2 ARP resolution flushes the kernel neighbor queue before teardown, and waits `150 ms` for `brcmfmac` SDIO TX completion.
+4. **Guaranteed Radio Cleanup (`trap cleanup EXIT INT TERM`)**:
+   - Terminates `wpa_supplicant`, removes temporary files in `/var/run`, flushes routes and IPv4 addresses on `wlan0`, and sets `wlan0 down` so `S39hostapd_conf`, `S40network` (`10.0.0.1`), and `hostapd` (`5 GHz` AP `futedongle`) start on a pristine radio interface.
 
 ### Stage 1: Instant Zero-Connection Arrival & SoC Broadcast via BLE Service Data
 Even while `aawgd` is running, the Pi 4's Bluetooth controller can broadcast a standard **BLE Advertisement** (`org.bluez.LEAdvertisingManager1`) carrying 8 bytes of compact telemetry in its `ServiceData` (or `ManufacturerData`) payload, updated every 15 seconds from `/run/gte_telemetry.json`:
@@ -133,15 +148,22 @@ template:
 
 ## 5. Configuration Flags in `/boot/aawgd.conf`
 
-```ini
-## Enable Home Garage Auto-Sync & BLE Telemetry Beacon
-AAWG_ENABLE_GARAGE_SYNC=0
+```sh
+######## Boot-Time Garage Door Opener (S38garage_opener) ########
+AAWG_ENABLE_GARAGE_OPEN=1
+AAWG_GARAGE_WIFI_SSID='COMARCA'
+AAWG_GARAGE_WIFI_HIDDEN=1
+AAWG_GARAGE_WIFI_BAND=2.4
+AAWG_GARAGE_WIFI_PASSWORD='miPassFake'
+AAWG_GARAGE_UDP_HOST=192.168.1.9
+AAWG_GARAGE_UDP_PORT=9876
+AAWG_GARAGE_UDP_PAYLOAD='OPEN_BOTH_GARAGE_FIRST'
+AAWG_GARAGE_TIMEOUT_SEC=5
 
-## Home Wi-Fi credentials for post-drive telemetry upload
+######## Post-Drive Home Assistant Telemetry Sync (Planned Stage 1 & 2) ########
+AAWG_ENABLE_GARAGE_SYNC=0
 #AAWG_HOME_WIFI_SSID=MyHomeWiFi
 #AAWG_HOME_WIFI_PASSWORD=SecretPassword
-
-## Home Assistant Webhook URL (local LAN)
 #AAWG_HA_WEBHOOK_URL=http://192.168.1.50:8123/api/webhook/futedongle_passat_gte_sync
 ```
 

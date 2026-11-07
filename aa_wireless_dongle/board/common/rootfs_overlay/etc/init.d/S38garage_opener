@@ -1,0 +1,261 @@
+#!/bin/sh
+#
+# Ephemeral boot-time garage door opener over hidden/visible 2.4 GHz Wi-Fi + UDP.
+# Runs synchronously at S38 BEFORE S39hostapd_conf and S40network touch wlan0,
+# guaranteeing complete cleanup so the 5 GHz Android Auto AP starts on a clean radio.
+#
+
+export PATH="/sbin:/usr/sbin:/bin:/usr/bin"
+
+if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
+	. /etc/aawgd.conf
+fi
+
+WPA_PIDFILE="/var/run/garage_wpa.pid"
+WPA_CONF="/var/run/garage_wpa.conf"
+UDHCPC_PIDFILE="/var/run/garage_udhcpc.pid"
+UDHCPC_SCRIPT="/var/run/garage_udhcpc.script"
+GARAGE_TOUCHED_WLAN0=0
+WATCHDOG_PID=""
+
+log_info() {
+	echo "garage_opener: $1"
+	logger -p daemon.info -t garage_opener "$1" 2>/dev/null || true
+}
+
+cleanup() {
+	trap - EXIT INT TERM
+
+	if [ -n "$WATCHDOG_PID" ]; then
+		kill "$WATCHDOG_PID" 2>/dev/null || true
+		wait "$WATCHDOG_PID" 2>/dev/null || true
+		WATCHDOG_PID=""
+	fi
+
+	if [ "$GARAGE_TOUCHED_WLAN0" != "1" ]; then
+		return 0
+	fi
+	GARAGE_TOUCHED_WLAN0=0
+
+	if [ -f "$UDHCPC_PIDFILE" ]; then
+		kill "$(cat "$UDHCPC_PIDFILE" 2>/dev/null)" 2>/dev/null || true
+		rm -f "$UDHCPC_PIDFILE"
+	fi
+
+	if [ -f "$WPA_PIDFILE" ]; then
+		WPA_PID="$(cat "$WPA_PIDFILE" 2>/dev/null)"
+		if [ -n "$WPA_PID" ]; then
+			kill "$WPA_PID" 2>/dev/null || true
+		fi
+		rm -f "$WPA_PIDFILE"
+	fi
+
+	killall -q wpa_supplicant 2>/dev/null || true
+
+	# Wait up to 1.5s for wpa_supplicant to exit completely so kernel nl80211
+	# management frame registrations on wlan0 are released before hostapd starts.
+	W_CNT=0
+	while pidof wpa_supplicant >/dev/null 2>&1 && [ "$W_CNT" -lt 15 ]; do
+		sleep 0.1
+		W_CNT=$((W_CNT + 1))
+	done
+	if pidof wpa_supplicant >/dev/null 2>&1; then
+		killall -9 -q wpa_supplicant 2>/dev/null || true
+		sleep 0.2
+	fi
+
+	rm -f "$WPA_CONF" "$UDHCPC_SCRIPT" /tmp/resolv.conf
+
+	iw dev wlan0 disconnect 2>/dev/null || true
+	ip route flush dev wlan0 2>/dev/null || true
+	ip addr flush dev wlan0 2>/dev/null || true
+	ip neigh flush dev wlan0 2>/dev/null || true
+	ip link set wlan0 down 2>/dev/null || true
+	iw dev wlan0 set type managed 2>/dev/null || true
+
+	# Re-apply configured regulatory domain in case the 2.4 GHz AP advertised
+	# a conflicting 802.11d Country IE that could block 5 GHz Channel 36.
+	if [ -n "${AAWG_COUNTRY_CODE:-}" ]; then
+		iw reg set "${AAWG_COUNTRY_CODE}" 2>/dev/null || true
+	fi
+
+	# Allow CYW43455 SDIO firmware state machine to settle before S40network/hostapd
+	sleep 0.2
+}
+
+run_garage_sequence() {
+	if [ "${AAWG_ENABLE_GARAGE_OPEN:-0}" != "1" ]; then
+		log_info "Disabled (AAWG_ENABLE_GARAGE_OPEN != 1), skipping."
+		return 0
+	fi
+
+	SSID="${AAWG_GARAGE_WIFI_SSID:-}"
+	PASSWORD="${AAWG_GARAGE_WIFI_PASSWORD:-}"
+	HIDDEN="${AAWG_GARAGE_WIFI_HIDDEN:-1}"
+	BAND="${AAWG_GARAGE_WIFI_BAND:-2.4}"
+	UDP_HOST="${AAWG_GARAGE_UDP_HOST:-}"
+	UDP_PORT="${AAWG_GARAGE_UDP_PORT:-9876}"
+	UDP_PAYLOAD="${AAWG_GARAGE_UDP_PAYLOAD:-OPEN_BOTH_GARAGE_FIRST}"
+	TIMEOUT_SEC="${AAWG_GARAGE_TIMEOUT_SEC:-5}"
+
+	case "$TIMEOUT_SEC" in
+		''|*[!0-9]*) TIMEOUT_SEC=5 ;;
+	esac
+	[ "$TIMEOUT_SEC" -lt 2 ] && TIMEOUT_SEC=2
+	[ "$TIMEOUT_SEC" -gt 15 ] && TIMEOUT_SEC=15
+
+	if [ -z "$SSID" ] || [ -z "$UDP_HOST" ] || [ -z "$UDP_PORT" ]; then
+		log_info "Missing garage SSID or UDP target configuration, skipping."
+		return 0
+	fi
+
+	# Never disrupt an active Android Auto AP session if invoked manually post-boot
+	if pidof hostapd >/dev/null 2>&1; then
+		log_info "hostapd is already running on wlan0; refusing to interrupt AP mode."
+		return 0
+	fi
+
+	# Wait up to 10s for async brcmfmac SDIO firmware initialization
+	WAIT_COUNT=0
+	while [ ! -d /sys/class/net/wlan0 ] && [ "$WAIT_COUNT" -lt 50 ]; do
+		sleep 0.2
+		WAIT_COUNT=$((WAIT_COUNT + 1))
+	done
+
+	if [ ! -d /sys/class/net/wlan0 ]; then
+		log_info "wlan0 interface did not appear in time, skipping."
+		return 0
+	fi
+
+	# Mark wlan0 as owned by this boot step and arm cleanup + hard wall-clock watchdog
+	GARAGE_TOUCHED_WLAN0=1
+	trap 'cleanup; exit 0' EXIT INT TERM
+
+	MAIN_PID=$$
+	HARD_LIMIT=$((TIMEOUT_SEC + 5))
+	(
+		trap 'kill "$SPID" 2>/dev/null || true; exit 0' TERM INT
+		sleep "$HARD_LIMIT" &
+		SPID=$!
+		if wait "$SPID" 2>/dev/null; then
+			logger -p daemon.warning -t garage_opener "Hard watchdog (${HARD_LIMIT}s) reached; aborting to start Android Auto AP." 2>/dev/null || true
+			kill -TERM "$MAIN_PID" 2>/dev/null || true
+		fi
+	) </dev/null >/dev/null 2>&1 &
+	WATCHDOG_PID=$!
+
+	ip link set lo up 2>/dev/null || true
+	rfkill unblock wifi 2>/dev/null || true
+	if [ -n "${AAWG_COUNTRY_CODE:-}" ]; then
+		iw reg set "${AAWG_COUNTRY_CODE}" 2>/dev/null || true
+	fi
+	ip link set wlan0 up 2>/dev/null || true
+
+	ESC_SSID=$(printf '%s' "$SSID" | sed 's/\\/\\\\/g; s/"/\\"/g')
+	ESC_PASS=$(printf '%s' "$PASSWORD" | sed 's/\\/\\\\/g; s/"/\\"/g')
+	SCAN_SSID=0
+	[ "$HIDDEN" = "1" ] && SCAN_SSID=1
+
+	FREQ_LIST=""
+	if [ "$BAND" = "2.4" ]; then
+		FREQ_LIST="freq_list=2412 2417 2422 2427 2432 2437 2442 2447 2452 2457 2462 2467 2472"
+	fi
+
+	(
+		umask 077
+		{
+			printf 'ap_scan=1\n'
+			[ -n "$FREQ_LIST" ] && printf '%s\n' "$FREQ_LIST"
+			printf 'network={\n'
+			printf '\tssid="%s"\n' "$ESC_SSID"
+			printf '\tscan_ssid=%s\n' "$SCAN_SSID"
+			if [ -n "$PASSWORD" ]; then
+				printf '\tpsk="%s"\n' "$ESC_PASS"
+				printf '\tkey_mgmt=WPA-PSK\n'
+			else
+				printf '\tkey_mgmt=NONE\n'
+			fi
+			[ -n "$FREQ_LIST" ] && printf '\t%s\n' "$FREQ_LIST"
+			printf '}\n'
+		} > "$WPA_CONF"
+	)
+
+	log_info "Connecting to garage Wi-Fi '${SSID}' (hidden=${SCAN_SSID}, band=${BAND}, timeout=${TIMEOUT_SEC}s)..."
+	if ! wpa_supplicant -D nl80211 -i wlan0 -c "$WPA_CONF" -P "$WPA_PIDFILE" -B >/dev/null 2>&1; then
+		log_info "Failed to launch wpa_supplicant."
+		return 0
+	fi
+
+	# Poll every 100ms until both 802.11 association and WPA2 4-way key installation (carrier=1) complete
+	MAX_TICKS=$((TIMEOUT_SEC * 10))
+	TICK=0
+	CONNECTED=0
+	while [ "$TICK" -lt "$MAX_TICKS" ]; do
+		if [ "$(cat /sys/class/net/wlan0/carrier 2>/dev/null)" = "1" ] && \
+		   iw dev wlan0 link 2>/dev/null | grep -q "^Connected to "; then
+			CONNECTED=1
+			break
+		fi
+		sleep 0.1
+		TICK=$((TICK + 1))
+	done
+
+	if [ "$CONNECTED" != "1" ]; then
+		log_info "Garage Wi-Fi '${SSID}' not in range (${TIMEOUT_SEC}s timeout); proceeding to Android Auto AP."
+		return 0
+	fi
+
+	# Minimal isolated udhcpc hook; temporary /tmp/resolv.conf is removed by cleanup()
+	cat << 'EOF' > "$UDHCPC_SCRIPT"
+#!/bin/sh
+case "$1" in
+	bound|renew)
+		ifconfig "$interface" "$ip" ${subnet:+netmask "$subnet"} up
+		for gw in $router; do
+			ip route add default via "$gw" dev "$interface" 2>/dev/null && break
+		done
+		if [ -n "$dns" ]; then
+			: > /tmp/resolv.conf
+			for ns in $dns; do
+				echo "nameserver $ns" >> /tmp/resolv.conf
+			done
+		fi
+		;;
+esac
+exit 0
+EOF
+	chmod 700 "$UDHCPC_SCRIPT"
+
+	if ! udhcpc -i wlan0 -n -q -t 2 -T 1 -A 0 -p "$UDHCPC_PIDFILE" -s "$UDHCPC_SCRIPT" >/dev/null 2>&1; then
+		log_info "DHCP lease failed on '${SSID}'; proceeding to Android Auto AP."
+		return 0
+	fi
+
+	if /usr/bin/garage_udp_send "$UDP_HOST" "$UDP_PORT" "$UDP_PAYLOAD"; then
+		log_info "Garage UDP trigger sent to ${UDP_HOST}:${UDP_PORT}."
+	else
+		log_info "Garage UDP send failed to ${UDP_HOST}:${UDP_PORT}."
+	fi
+
+	return 0
+}
+
+case "$1" in
+	start)
+		run_garage_sequence
+		cleanup
+		;;
+	stop)
+		# Only tear down if garage wpa_supplicant is actively running
+		if [ -f "$WPA_PIDFILE" ]; then
+			GARAGE_TOUCHED_WLAN0=1
+			cleanup
+		fi
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac
+
+exit 0

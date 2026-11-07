@@ -449,6 +449,72 @@ std::string getConfFilePath() {
     return ETC_CONF_PATH;
 }
 
+std::string unquoteShellValue(const std::string& rawVal) {
+    std::string out;
+    out.reserve(rawVal.size());
+    bool inSingle = false;
+    bool inDouble = false;
+
+    for (size_t i = 0; i < rawVal.size(); ++i) {
+        char c = rawVal[i];
+        if (inSingle) {
+            if (c == '\'') {
+                inSingle = false;
+            } else {
+                out.push_back(c);
+            }
+        } else if (inDouble) {
+            if (c == '"') {
+                inDouble = false;
+            } else if (c == '\\' && i + 1 < rawVal.size() &&
+                       (rawVal[i + 1] == '"' || rawVal[i + 1] == '\\' ||
+                        rawVal[i + 1] == '$' || rawVal[i + 1] == '`')) {
+                out.push_back(rawVal[++i]);
+            } else {
+                out.push_back(c);
+            }
+        } else {
+            if (c == '\'') {
+                inSingle = true;
+            } else if (c == '"') {
+                inDouble = true;
+            } else if (c == '\\' && i + 1 < rawVal.size()) {
+                out.push_back(rawVal[++i]);
+            } else if (c == ' ' || c == '\t') {
+                break;
+            } else {
+                out.push_back(c);
+            }
+        }
+    }
+    return out;
+}
+
+std::string shellQuote(const std::string& val) {
+    if (!val.empty()) {
+        bool safeBare = true;
+        for (unsigned char c : val) {
+            if (!isalnum(c) && c != '_' && c != '-' && c != '.' && c != ':' && c != '/') {
+                safeBare = false;
+                break;
+            }
+        }
+        if (safeBare) {
+            return val;
+        }
+    }
+    std::string out = "'";
+    for (char c : val) {
+        if (c == '\'') {
+            out += "'\\''";
+        } else {
+            out.push_back(c);
+        }
+    }
+    out.push_back('\'');
+    return out;
+}
+
 std::map<std::string, std::string> readConfigMap() {
     std::map<std::string, std::string> cfg = {
         {"AAWG_COUNTRY_CODE", "ES"},
@@ -456,11 +522,21 @@ std::map<std::string, std::string> readConfigMap() {
         {"AAWG_EARLY_USB_VERSION_EXCHANGE", "0"},
         {"AAWG_BLUETOOTH_NAME", "futedongle"},
         {"AAWG_WIFI_SSID", "futedongle"},
+        {"AAWG_WIFI_PASSWORD", "fute?dongle!"},
         {"AAWG_ENABLE_SSH", "0"},
-        {"AAWG_ENABLE_DEBUG_LOG", "1"},
+        {"AAWG_ENABLE_DEBUG_LOG", "0"},
         {"AAWG_ENABLE_WEB_PORTAL", "1"},
         {"AAWG_ENABLE_OBD_TELEMETRY", "0"},
-        {"AAWG_OBD_BLE_MAC", ""}
+        {"AAWG_OBD_BLE_MAC", ""},
+        {"AAWG_ENABLE_GARAGE_OPEN", "1"},
+        {"AAWG_GARAGE_WIFI_SSID", "COMARCA"},
+        {"AAWG_GARAGE_WIFI_HIDDEN", "1"},
+        {"AAWG_GARAGE_WIFI_BAND", "2.4"},
+        {"AAWG_GARAGE_WIFI_PASSWORD", "miPassFake"},
+        {"AAWG_GARAGE_UDP_HOST", "192.168.1.9"},
+        {"AAWG_GARAGE_UDP_PORT", "9876"},
+        {"AAWG_GARAGE_UDP_PAYLOAD", "OPEN_BOTH_GARAGE_FIRST"},
+        {"AAWG_GARAGE_TIMEOUT_SEC", "5"}
     };
 
     std::ifstream file(getConfFilePath());
@@ -479,7 +555,7 @@ std::map<std::string, std::string> readConfigMap() {
             continue;
         }
         std::string key = trim(t.substr(0, eq));
-        std::string val = trim(t.substr(eq + 1));
+        std::string val = unquoteShellValue(trim(t.substr(eq + 1)));
         if (cfg.find(key) != cfg.end()) {
             cfg[key] = val;
         }
@@ -497,6 +573,43 @@ bool isValidIdentifier(const std::string& s, size_t maxLen) {
         }
     }
     return true;
+}
+
+bool isPrintableAscii(const std::string& s, size_t minLen, size_t maxLen) {
+    if (s.size() < minLen || s.size() > maxLen) {
+        return false;
+    }
+    for (unsigned char c : s) {
+        if (c < 0x20 || c > 0x7E) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool isValidHost(const std::string& s) {
+    if (s.empty() || s.size() > 64 || s.front() == '-' || s.back() == '-') {
+        return false;
+    }
+    for (unsigned char c : s) {
+        if (!isalnum(c) && c != '.' && c != '-') {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool isValidIntInRange(const std::string& s, int minVal, int maxVal) {
+    if (s.empty() || s.size() > 6) {
+        return false;
+    }
+    for (unsigned char c : s) {
+        if (!isdigit(c)) {
+            return false;
+        }
+    }
+    long v = strtol(s.c_str(), nullptr, 10);
+    return v >= minVal && v <= maxVal;
 }
 
 bool isValidMacOrEmpty(const std::string& s) {
@@ -538,7 +651,12 @@ void handlePostConfig(int clientFd, const std::string& body) {
         if (cfg.find(k) == cfg.end()) {
             continue;
         }
-        std::string val = trim(v);
+        bool preserveRawSpaces = (k == "AAWG_WIFI_PASSWORD" ||
+                                  k == "AAWG_GARAGE_WIFI_SSID" ||
+                                  k == "AAWG_GARAGE_WIFI_PASSWORD" ||
+                                  k == "AAWG_GARAGE_UDP_PAYLOAD");
+        std::string val = preserveRawSpaces ? v : trim(v);
+
         if (k == "AAWG_COUNTRY_CODE") {
             if (val.size() != 2 || !isupper(static_cast<unsigned char>(val[0])) || !isupper(static_cast<unsigned char>(val[1]))) {
                 sendJsonError(clientFd, "400 Bad Request", "AAWG_COUNTRY_CODE must be a 2-letter uppercase ISO code (e.g. ES)");
@@ -553,7 +671,9 @@ void handlePostConfig(int clientFd, const std::string& body) {
                    k == "AAWG_ENABLE_SSH" ||
                    k == "AAWG_ENABLE_DEBUG_LOG" ||
                    k == "AAWG_ENABLE_WEB_PORTAL" ||
-                   k == "AAWG_ENABLE_OBD_TELEMETRY") {
+                   k == "AAWG_ENABLE_OBD_TELEMETRY" ||
+                   k == "AAWG_ENABLE_GARAGE_OPEN" ||
+                   k == "AAWG_GARAGE_WIFI_HIDDEN") {
             if (val != "0" && val != "1") {
                 sendJsonError(clientFd, "400 Bad Request", k + " must be 0 or 1");
                 return;
@@ -563,13 +683,64 @@ void handlePostConfig(int clientFd, const std::string& body) {
                 sendJsonError(clientFd, "400 Bad Request", k + " must be 1-32 alphanumeric, '-' or '_' characters");
                 return;
             }
+        } else if (k == "AAWG_WIFI_PASSWORD") {
+            if (!isPrintableAscii(val, 8, 63)) {
+                sendJsonError(clientFd, "400 Bad Request", "AAWG_WIFI_PASSWORD must be 8-63 printable ASCII characters");
+                return;
+            }
         } else if (k == "AAWG_OBD_BLE_MAC") {
             if (!isValidMacOrEmpty(val)) {
                 sendJsonError(clientFd, "400 Bad Request", "AAWG_OBD_BLE_MAC must be XX:XX:XX:XX:XX:XX or empty");
                 return;
             }
+        } else if (k == "AAWG_GARAGE_WIFI_SSID") {
+            if (!isPrintableAscii(val, 0, 32)) {
+                sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_WIFI_SSID must be up to 32 printable ASCII characters");
+                return;
+            }
+        } else if (k == "AAWG_GARAGE_WIFI_BAND") {
+            if (val != "2.4" && val != "all") {
+                sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_WIFI_BAND must be 2.4 or all");
+                return;
+            }
+        } else if (k == "AAWG_GARAGE_WIFI_PASSWORD") {
+            if (!val.empty() && !isPrintableAscii(val, 8, 63)) {
+                sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_WIFI_PASSWORD must be empty (open network) or 8-63 printable ASCII characters");
+                return;
+            }
+        } else if (k == "AAWG_GARAGE_UDP_HOST") {
+            if (!val.empty() && !isValidHost(val)) {
+                sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_UDP_HOST must be a valid IPv4 address or hostname");
+                return;
+            }
+        } else if (k == "AAWG_GARAGE_UDP_PORT") {
+            if (!isValidIntInRange(val, 1, 65535)) {
+                sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_UDP_PORT must be between 1 and 65535");
+                return;
+            }
+        } else if (k == "AAWG_GARAGE_UDP_PAYLOAD") {
+            if (!isPrintableAscii(val, 1, 128)) {
+                sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_UDP_PAYLOAD must be 1-128 printable ASCII characters");
+                return;
+            }
+        } else if (k == "AAWG_GARAGE_TIMEOUT_SEC") {
+            if (!isValidIntInRange(val, 2, 15)) {
+                sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_TIMEOUT_SEC must be between 2 and 15 seconds");
+                return;
+            }
         }
         cfg[k] = val;
+    }
+
+    if (cfg["AAWG_ENABLE_GARAGE_OPEN"] == "1") {
+        if (cfg["AAWG_GARAGE_WIFI_SSID"].empty()) {
+            sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_WIFI_SSID is required when garage opener is enabled");
+            return;
+        }
+        if (cfg["AAWG_GARAGE_UDP_HOST"].empty()) {
+            sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_UDP_HOST is required when garage opener is enabled");
+            return;
+        }
     }
 
     int lockFd = open(BOOT_LOCK_PATH, O_CREAT | O_RDWR, 0600);
@@ -591,9 +762,11 @@ void handlePostConfig(int clientFd, const std::string& body) {
                 << "## Early USB version exchange (0 = Disabled, 1 = Enabled)\n"
                 << "AAWG_EARLY_USB_VERSION_EXCHANGE=" << cfg["AAWG_EARLY_USB_VERSION_EXCHANGE"] << "\n\n"
                 << "## Custom Bluetooth device alias\n"
-                << "AAWG_BLUETOOTH_NAME=" << cfg["AAWG_BLUETOOTH_NAME"] << "\n\n"
+                << "AAWG_BLUETOOTH_NAME=" << shellQuote(cfg["AAWG_BLUETOOTH_NAME"]) << "\n\n"
                 << "## Custom 5 GHz Wi-Fi SSID\n"
-                << "AAWG_WIFI_SSID=" << cfg["AAWG_WIFI_SSID"] << "\n\n"
+                << "AAWG_WIFI_SSID=" << shellQuote(cfg["AAWG_WIFI_SSID"]) << "\n\n"
+                << "## Fixed 5 GHz Wi-Fi WPA2 passphrase\n"
+                << "AAWG_WIFI_PASSWORD=" << shellQuote(cfg["AAWG_WIFI_PASSWORD"]) << "\n\n"
                 << "######## Diagnostics & Next-Gen Features ########\n\n"
                 << "## Enable SSH over eth0 (0 = Disabled, 1 = Enabled)\n"
                 << "AAWG_ENABLE_SSH=" << cfg["AAWG_ENABLE_SSH"] << "\n\n"
@@ -608,19 +781,18 @@ void handlePostConfig(int clientFd, const std::string& body) {
     } else {
         confContent << "#AAWG_OBD_BLE_MAC=\n";
     }
-    confContent << "\nif [ ! -f /tmp/dnsmasq.conf ]; then\n"
-                << "\tcat << 'EOF' > /tmp/dnsmasq.conf\n"
-                << "interface=wlan0\n"
-                << "dhcp-range=10.0.0.2,10.0.0.20,12h\n"
-                << "dhcp-authoritative\n"
-                << "no-resolv\n"
-                << "no-poll\n"
-                << "domain-needed\n"
-                << "bogus-priv\n"
-                << "address=/futedongle.lan/10.0.0.1\n"
-                << "EOF\n"
-                << "\t/bin/mount --bind /tmp/dnsmasq.conf /etc/dnsmasq.conf 2>/dev/null || true\n"
-                << "fi\n";
+    confContent << "\n######## Boot-Time Garage Door Opener (S38garage_opener) ########\n\n"
+                << "## Connect briefly on power-up to a garage Wi-Fi AP and send a UDP trigger\n"
+                << "## before starting the 5 GHz Android Auto Access Point.\n"
+                << "AAWG_ENABLE_GARAGE_OPEN=" << cfg["AAWG_ENABLE_GARAGE_OPEN"] << "\n"
+                << "AAWG_GARAGE_WIFI_SSID=" << shellQuote(cfg["AAWG_GARAGE_WIFI_SSID"]) << "\n"
+                << "AAWG_GARAGE_WIFI_HIDDEN=" << cfg["AAWG_GARAGE_WIFI_HIDDEN"] << "\n"
+                << "AAWG_GARAGE_WIFI_BAND=" << cfg["AAWG_GARAGE_WIFI_BAND"] << "\n"
+                << "AAWG_GARAGE_WIFI_PASSWORD=" << shellQuote(cfg["AAWG_GARAGE_WIFI_PASSWORD"]) << "\n"
+                << "AAWG_GARAGE_UDP_HOST=" << shellQuote(cfg["AAWG_GARAGE_UDP_HOST"]) << "\n"
+                << "AAWG_GARAGE_UDP_PORT=" << cfg["AAWG_GARAGE_UDP_PORT"] << "\n"
+                << "AAWG_GARAGE_UDP_PAYLOAD=" << shellQuote(cfg["AAWG_GARAGE_UDP_PAYLOAD"]) << "\n"
+                << "AAWG_GARAGE_TIMEOUT_SEC=" << cfg["AAWG_GARAGE_TIMEOUT_SEC"] << "\n";
 
     std::string serialized = confContent.str();
     int outFd = open(tmpPath.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);
