@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <unistd.h>
 #include <signal.h>
 #include <fcntl.h>
@@ -17,6 +18,10 @@
 #include "usb.h"
 #include "bluetoothHandler.h"
 #include "proxyHandler.h"
+
+namespace {
+std::atomic<bool> s_garage_opener_fired_this_boot{false};
+} // namespace
 
 void empty_signal_handler(int signal) {
     // Empty. We don't want to do anything but interrupt the thread.
@@ -112,6 +117,13 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
             break;
     }
 
+    const bool monitor_garage_video =
+        (direction == ProxyDirection::TCP_to_USB) &&
+        !s_garage_opener_fired_this_boot.load() &&
+        (access("/var/run/garage_in_range", F_OK) == 0) &&
+        (access("/var/run/garage_opened_once", F_OK) != 0);
+    int foreground_video_frames = 0;
+
     while (!should_exit) {
         // Read
         ssize_t len = read_message
@@ -154,6 +166,20 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
         }
         else if (should_exit) {
             break;
+        }
+
+        if (monitor_garage_video && len > 2000) {
+            ++foreground_video_frames;
+            if (foreground_video_frames >= 15) {
+                bool expected = false;
+                if (s_garage_opener_fired_this_boot.compare_exchange_strong(expected, true)) {
+                    Logger::instance()->info(
+                        "Foreground Android Auto video detected in garage (%d frames); triggering garage door opener\n",
+                        foreground_video_frames);
+                    m_triggered_garage_opener = true;
+                    break;
+                }
+            }
         }
     }
 
@@ -423,6 +449,9 @@ void AAWProxy::handleClient(int server_sock) {
     close(m_usb_fd);
     m_usb_fd = -1;
 
+    if (m_triggered_garage_opener.load()) {
+        shutdown(m_tcp_fd, SHUT_RDWR);
+    }
     close(m_tcp_fd);
     m_tcp_fd = -1;
 
@@ -430,6 +459,16 @@ void AAWProxy::handleClient(int server_sock) {
     usb_version_minor = 0;
 
     Logger::instance()->info("Forwarding stopped\n");
+
+    if (m_triggered_garage_opener.load()) {
+        // Detach USB gadget immediately so the head unit cleanly exits the first session,
+        // and allow 100ms for the kernel to transmit TCP FIN over 5 GHz before switching wlan0.
+        UsbManager::instance().disableGadget();
+        usleep(100000);
+        Logger::instance()->info("Executing runtime garage door opener sequence (/etc/init.d/S38garage_opener fire)\n");
+        int rc = system("/etc/init.d/S38garage_opener fire");
+        Logger::instance()->info("Garage door opener sequence completed (rc=%d); restarting Android Auto session\n", rc);
+    }
 }
 
 std::optional<std::thread> AAWProxy::startServer(int32_t port) {
