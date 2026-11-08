@@ -114,6 +114,15 @@ bool UsbManager::enableDefaultAndWaitForAccessory(std::chrono::milliseconds time
         return true;
     });
 
+    if (!s_udcName.empty()) {
+        std::ifstream stateFile("/sys/class/udc/" + s_udcName + "/state");
+        std::string state;
+        if (stateFile.is_open() && std::getline(stateFile, state) && state != "not attached") {
+            disableGadget();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+
     enableGadget(defaultGadgetName);
 
     Logger::instance()->info("USB Manager: Enabled default gadget\n");

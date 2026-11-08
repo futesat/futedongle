@@ -347,6 +347,10 @@ void BluetoothHandler::powerOn() {
         wasPowered = false;
     }
 
+    if (!wasPowered) {
+        m_lastHandoffTimestampMs.store(0);
+    }
+
     setPower(true);
     setPairable(true);
 
@@ -363,8 +367,6 @@ std::optional<std::thread> BluetoothHandler::connectWithRetry() {
     if (!m_adapter) {
         return std::nullopt;
     }
-
-    m_lastHandoffTimestampMs.store(0);
 
     std::future<void> connectWithRetryFuture;
     {
