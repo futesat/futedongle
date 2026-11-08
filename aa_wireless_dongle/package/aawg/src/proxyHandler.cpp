@@ -8,9 +8,11 @@
 #include <netinet/tcp.h>
 #include <sys/socket.h>
 #include <sys/poll.h>
+#include <sys/wait.h>
 #include <thread>
 #include <optional>
 #include <atomic>
+#include <chrono>
 #include <string>
 #include <vector>
 
@@ -21,6 +23,35 @@
 
 namespace {
 std::atomic<bool> s_garage_opener_fired_this_boot{false};
+
+int runGarageOpenerFire() {
+    pid_t pid = fork();
+    if (pid < 0) {
+        return -1;
+    }
+    if (pid == 0) {
+        // Close all inherited descriptors >= 3 before exec so child daemons
+        // (hostapd, dnsmasq) never hold open D-Bus, Netlink, or USB descriptors,
+        // without touching /bin/sh's own script descriptor after exec.
+        long max_fd = sysconf(_SC_OPEN_MAX);
+        if (max_fd < 0 || max_fd > 1024) {
+            max_fd = 1024;
+        }
+        for (int fd = 3; fd < static_cast<int>(max_fd); ++fd) {
+            close(fd);
+        }
+        execl("/etc/init.d/S38garage_opener", "S38garage_opener", "fire", static_cast<char*>(nullptr));
+        _exit(127);
+    }
+
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0) {
+        if (errno != EINTR) {
+            return -1;
+        }
+    }
+    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+}
 } // namespace
 
 void empty_signal_handler(int signal) {
@@ -194,13 +225,17 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
         }
     }
 
-    if (direction == ProxyDirection::USB_to_TCP) {
-        m_usb_tcp_done = true;
-    } else {
-        m_tcp_usb_done = true;
-    }
-
     stopForwarding(should_exit);
+
+    {
+        std::lock_guard<std::mutex> lock(m_exit_mutex);
+        if (direction == ProxyDirection::USB_to_TCP) {
+            m_usb_tcp_done = true;
+        } else {
+            m_tcp_usb_done = true;
+        }
+    }
+    m_exit_cv.notify_all();
 }
 
 void AAWProxy::stopForwarding(std::atomic<bool>& should_exit) {
@@ -211,14 +246,7 @@ void AAWProxy::stopForwarding(std::atomic<bool>& should_exit) {
         shutdown(m_tcp_fd, SHUT_RDWR);
     }
 
-    const pthread_t self = pthread_self();
-    if (m_usb_tcp_thread && !m_usb_tcp_done.load() && m_usb_tcp_thread->native_handle() != self) {
-        pthread_kill(m_usb_tcp_thread->native_handle(), SIGUSR1);
-    }
-
-    if (m_tcp_usb_thread && !m_tcp_usb_done.load() && m_tcp_usb_thread->native_handle() != self) {
-        pthread_kill(m_tcp_usb_thread->native_handle(), SIGUSR1);
-    }
+    m_exit_cv.notify_all();
 }
 
 constexpr uint16_t default_version_major = 1;
@@ -457,21 +485,34 @@ void AAWProxy::handleClient(int server_sock) {
 
     Logger::instance()->info("Forwarding data between TCP and USB\n");
     std::atomic<bool> should_exit = false;
-    m_usb_tcp_done = false;
-    m_tcp_usb_done = false;
+    {
+        std::lock_guard<std::mutex> lock(m_exit_mutex);
+        m_usb_tcp_done = false;
+        m_tcp_usb_done = false;
+    }
     m_usb_tcp_thread = std::thread(&AAWProxy::forward, this, ProxyDirection::USB_to_TCP, std::ref(should_exit));
     m_tcp_usb_thread = std::thread(&AAWProxy::forward, this, ProxyDirection::TCP_to_USB, std::ref(should_exit));
 
-    while (!m_usb_tcp_done.load() || !m_tcp_usb_done.load()) {
-        if (should_exit.load()) {
-            if (m_usb_tcp_thread && !m_usb_tcp_done.load()) {
+    {
+        std::unique_lock<std::mutex> lock(m_exit_mutex);
+        // Sleep with 0% CPU until either forwarding thread requests exit
+        m_exit_cv.wait(lock, [&]() {
+            return should_exit.load() || (m_usb_tcp_done && m_tcp_usb_done);
+        });
+
+        // Once exit is requested, pulse SIGUSR1 every 25ms under m_exit_mutex
+        // to wake any thread still blocked in read(/dev/usb_accessory).
+        while (!m_usb_tcp_done || !m_tcp_usb_done) {
+            if (m_usb_tcp_thread && !m_usb_tcp_done) {
                 pthread_kill(m_usb_tcp_thread->native_handle(), SIGUSR1);
             }
-            if (m_tcp_usb_thread && !m_tcp_usb_done.load()) {
+            if (m_tcp_usb_thread && !m_tcp_usb_done) {
                 pthread_kill(m_tcp_usb_thread->native_handle(), SIGUSR1);
             }
+            m_exit_cv.wait_for(lock, std::chrono::milliseconds(25), [&]() {
+                return m_usb_tcp_done && m_tcp_usb_done;
+            });
         }
-        usleep(20000);
     }
 
     m_usb_tcp_thread->join();
@@ -502,7 +543,7 @@ void AAWProxy::handleClient(int server_sock) {
         UsbManager::instance().disableGadget();
         usleep(100000);
         Logger::instance()->info("Executing runtime garage door opener sequence (/etc/init.d/S38garage_opener fire)\n");
-        int rc = system("/etc/init.d/S38garage_opener fire");
+        int rc = runGarageOpenerFire();
         Logger::instance()->info("Garage door opener sequence completed (rc=%d); restarting Android Auto session\n", rc);
     }
 }

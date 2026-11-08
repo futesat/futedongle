@@ -37,7 +37,7 @@ private:
     void setPower(bool on);
     void setPairable(bool pairable);
     void exportProfiles();
-    void connectDevice();
+    bool connectDevice();
 
     void startAdvertising();
     void stopAdvertising();
