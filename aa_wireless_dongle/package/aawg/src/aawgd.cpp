@@ -1,3 +1,4 @@
+#include <signal.h>
 #include <stdio.h>
 #include <unistd.h>
 
@@ -8,6 +9,7 @@
 #include "usb.h"
 
 int main(void) {
+    signal(SIGPIPE, SIG_IGN);
     Logger::instance()->info("AA Wireless Dongle\n");
 
     // Global init
