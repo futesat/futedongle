@@ -288,13 +288,15 @@ void BluetoothHandler::connectDevice() {
 void BluetoothHandler::retryConnectLoop(std::future<void> connectWithRetryFuture) {
     bool should_exit = false;
     m_triedDirectConnect = false;
-
-    constexpr int32_t BT_RETRY_INTERVAL_SECONDS = 5;
+    int32_t attempt = 0;
 
     while (!should_exit) {
         connectDevice();
 
-        if (connectWithRetryFuture.wait_for(std::chrono::seconds(BT_RETRY_INTERVAL_SECONDS)) == std::future_status::ready) {
+        const int32_t retryIntervalSec = (attempt < 2) ? 2 : 5;
+        ++attempt;
+
+        if (connectWithRetryFuture.wait_for(std::chrono::seconds(retryIntervalSec)) == std::future_status::ready) {
             should_exit = true;
             std::lock_guard<std::mutex> lock(m_retryMutex);
             connectWithRetryPromise = nullptr;
@@ -327,8 +329,19 @@ void BluetoothHandler::powerOn() {
         return;
     }
 
+    bool wasPowered = true;
+    try {
+        wasPowered = (m_adapter->powered && m_adapter->powered->value());
+    } catch (DBus::Error&) {
+        wasPowered = false;
+    }
+
     setPower(true);
     setPairable(true);
+
+    if (!wasPowered) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(250));
+    }
 
     if (Config::instance()->getConnectionStrategy() == ConnectionStrategy::DONGLE_MODE) {
         startAdvertising();
@@ -340,6 +353,8 @@ std::optional<std::thread> BluetoothHandler::connectWithRetry() {
         return std::nullopt;
     }
 
+    m_lastHandoffTimestampMs.store(0);
+
     std::future<void> connectWithRetryFuture;
     {
         std::lock_guard<std::mutex> lock(m_retryMutex);
@@ -350,6 +365,7 @@ std::optional<std::thread> BluetoothHandler::connectWithRetry() {
 }
 
 void BluetoothHandler::stopConnectWithRetry() {
+    m_lastHandoffTimestampMs.store(0);
     std::lock_guard<std::mutex> lock(m_retryMutex);
     if (connectWithRetryPromise) {
         connectWithRetryPromise->set_value();
