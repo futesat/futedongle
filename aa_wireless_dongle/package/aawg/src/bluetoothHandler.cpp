@@ -197,9 +197,13 @@ void BluetoothHandler::notifyHandoffStarted() {
     m_lastHandoffTimestampMs.store(currentTimeMs());
 }
 
+void BluetoothHandler::clearHandoffInProgress() {
+    m_lastHandoffTimestampMs.store(0);
+}
+
 bool BluetoothHandler::connectDevice() {
     int64_t lastHandoff = m_lastHandoffTimestampMs.load();
-    if (lastHandoff > 0 && (currentTimeMs() - lastHandoff) < 25000) {
+    if (lastHandoff > 0 && (currentTimeMs() - lastHandoff) < 10000) {
         Logger::instance()->info("Bluetooth handoff in progress, waiting for Wi-Fi TCP connection\n");
         return true;
     }

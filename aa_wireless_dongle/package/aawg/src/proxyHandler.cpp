@@ -265,7 +265,10 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
 
 void AAWProxy::stopForwarding(std::atomic<bool>& should_exit) {
     Logger::instance()->info("Interrupting threads to stop forwarding\n");
-    should_exit = true;
+    {
+        std::lock_guard<std::mutex> lock(m_exit_mutex);
+        should_exit = true;
+    }
 
     if (m_tcp_fd >= 0) {
         shutdown(m_tcp_fd, SHUT_RDWR);
