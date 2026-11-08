@@ -197,11 +197,11 @@ void BluetoothHandler::notifyHandoffStarted() {
     m_lastHandoffTimestampMs.store(currentTimeMs());
 }
 
-void BluetoothHandler::connectDevice() {
+bool BluetoothHandler::connectDevice() {
     int64_t lastHandoff = m_lastHandoffTimestampMs.load();
     if (lastHandoff > 0 && (currentTimeMs() - lastHandoff) < 25000) {
         Logger::instance()->info("Bluetooth handoff in progress, waiting for Wi-Fi TCP connection\n");
-        return;
+        return true;
     }
 
     DBus::ManagedObjects objects = getBluezObjects();
@@ -221,10 +221,11 @@ void BluetoothHandler::connectDevice() {
 
     if (!device_paths.size()) {
         Logger::instance()->info("Did not find any paired bluetooth device\n");
-        return;
+        return false;
     }
 
     const bool isDongleMode = (Config::instance()->getConnectionStrategy() == ConnectionStrategy::DONGLE_MODE);
+    bool anyConnected = false;
 
     Logger::instance()->info("Found %d paired bluetooth devices\n", device_paths.size());
 
@@ -270,8 +271,9 @@ void BluetoothHandler::connectDevice() {
                 }
             }
             Logger::instance()->info("Bluetooth connected to the device\n");
+            anyConnected = true;
             if (!isDongleMode) {
-                return;
+                return true;
             }
         } catch (DBus::Error& e) {
             if (!isDongleMode) {
@@ -283,18 +285,27 @@ void BluetoothHandler::connectDevice() {
     if (!isDongleMode) {
         Logger::instance()->info("Failed to connect to any known bluetooth device\n");
     }
+    return anyConnected;
 }
 
 void BluetoothHandler::retryConnectLoop(std::future<void> connectWithRetryFuture) {
     bool should_exit = false;
     m_triedDirectConnect = false;
-    int32_t attempt = 0;
+    int32_t failedAttempts = 0;
 
     while (!should_exit) {
-        connectDevice();
+        const bool connected = connectDevice();
 
-        const int32_t retryIntervalSec = (attempt < 2) ? 2 : 5;
-        ++attempt;
+        // When Bluetooth connects, give the phone a full 5s window to open the
+        // RFCOMM AAWirelessProfile socket before considering the link stalled.
+        // Only use fast 2s retries when Bluetooth connection itself failed.
+        int32_t retryIntervalSec = 5;
+        if (!connected) {
+            retryIntervalSec = (failedAttempts < 3) ? 2 : 5;
+            ++failedAttempts;
+        } else {
+            failedAttempts = 0;
+        }
 
         if (connectWithRetryFuture.wait_for(std::chrono::seconds(retryIntervalSec)) == std::future_status::ready) {
             should_exit = true;

@@ -14,16 +14,6 @@
 
 export PATH="/sbin:/usr/sbin:/bin:/usr/bin"
 
-# Close any file descriptors >= 3 inherited from aawgd when invoked via system()
-# so background daemons (hostapd, dnsmasq) never hold open D-Bus or netlink sockets.
-for _fd_path in /proc/$$/fd/*; do
-	_fd="${_fd_path##*/}"
-	case "$_fd" in
-		0|1|2|'*') ;;
-		*) eval "exec ${_fd}>&-" 2>/dev/null || true ;;
-	esac
-done
-
 if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
 	. /etc/aawgd.conf
 fi
@@ -131,9 +121,11 @@ restore_ap() {
 		hostapd -B /var/run/hostapd.conf -t -f /var/log/hostapd >/dev/null 2>&1 || true
 
 		H_TICK=0
-		while [ "$H_TICK" -lt 12 ]; do
+		while [ "$H_TICK" -lt 15 ]; do
+			WLAN_INFO="$(iw dev wlan0 info 2>/dev/null)"
 			if pidof hostapd >/dev/null 2>&1 && \
-			   iw dev wlan0 info 2>/dev/null | grep -q "type AP"; then
+			   printf '%s\n' "$WLAN_INFO" | grep -q "type AP" && \
+			   printf '%s\n' "$WLAN_INFO" | grep -q "channel "; then
 				AP_UP=1
 				break
 			fi

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
 #include <optional>
 #include <thread>
 
@@ -39,6 +41,8 @@ private:
 
     std::atomic<bool> m_log_communication = false;
     std::atomic<bool> m_triggered_garage_opener = false;
-    std::atomic<bool> m_usb_tcp_done = false;
-    std::atomic<bool> m_tcp_usb_done = false;
+    std::mutex m_exit_mutex;
+    std::condition_variable m_exit_cv;
+    bool m_usb_tcp_done = false;
+    bool m_tcp_usb_done = false;
 };
