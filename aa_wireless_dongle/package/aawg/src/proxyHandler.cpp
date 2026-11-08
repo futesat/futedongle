@@ -77,13 +77,26 @@ ssize_t AAWProxy::readFully(int fd, unsigned char *buffer, size_t nbyte) {
 
 ssize_t AAWProxy::writeFully(int fd, const unsigned char *buffer, size_t nbyte) {
     size_t remaining_bytes = nbyte;
+    int usb_enodev_retries = 0;
     while (remaining_bytes > 0) {
         ssize_t len = write(fd, buffer, remaining_bytes);
 
-        if (len <= 0) {
+        if (len < 0) {
+            // In f_accessory.c, acc_write() returns -ENODEV immediately if dev->online
+            // momentarily drops to 0 during a USB host SET_CONFIGURATION transition.
+            if (fd == m_usb_fd && (errno == ENODEV || errno == EAGAIN) &&
+                !m_triggered_garage_opener.load() && usb_enodev_retries < 15) {
+                ++usb_enodev_retries;
+                usleep(20000);
+                continue;
+            }
             return len;
         }
+        if (len == 0) {
+            return 0;
+        }
 
+        usb_enodev_retries = 0;
         buffer += len;
         remaining_bytes -= len;
     }
@@ -283,7 +296,7 @@ bool AAWProxy::performUsbVersionExchange() {
     Logger::instance()->info("Attempting early version exchange with USB\n");
 
     // Receive version request
-    size_t buffer_len = 16;
+    constexpr size_t buffer_len = 16;
     unsigned char buffer[buffer_len];
 
     ssize_t len = read(m_usb_fd, buffer, buffer_len);

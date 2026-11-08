@@ -54,6 +54,9 @@ case "$1" in
 						echo "--- NETWORK & DHCP LEASES ---"
 						/sbin/ip addr 2>/dev/null || true
 						cat /var/lib/misc/dnsmasq.leases 2>/dev/null || true
+						echo "--- GARAGE OPENER STATE ---"
+						ls -la /var/run/garage_* 2>/dev/null || true
+						cat /var/run/garage_env 2>/dev/null || true
 						echo ""
 					} >> /var/log/car_snapshots.tmp 2>&1
 

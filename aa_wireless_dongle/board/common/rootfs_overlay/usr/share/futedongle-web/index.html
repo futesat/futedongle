@@ -378,6 +378,10 @@
             <div class="label">Active USB Gadget</div>
             <div class="value" id="st-gadget">-</div>
           </div>
+          <div class="metric">
+            <div class="label">Garage Door Trigger</div>
+            <div class="value" id="st-garage">-</div>
+          </div>
         </div>
       </div>
 
@@ -677,6 +681,11 @@
           : '<span class="badge err">Stopped</span>';
         document.getElementById('st-udc').textContent = d.udc_state + ' (' + d.udc_speed + ')';
         document.getElementById('st-gadget').textContent = d.active_gadget;
+        document.getElementById('st-garage').innerHTML = d.garage_opened_once
+          ? '<span class="badge ok">Opened This Boot</span>'
+          : (d.garage_in_range
+              ? '<span class="badge warn">Armed (Wait Video)</span>'
+              : '<span class="badge">Disarmed (Out of Range)</span>');
         document.getElementById('st-temp').textContent = d.soc_temp_c.toFixed(1) + ' °C';
         document.getElementById('st-cpu').textContent = d.cpu_freq_mhz + ' MHz • ' + (d.load_avg.split(' ')[0] || '');
         document.getElementById('st-uv').innerHTML = d.undervoltage_events === 0

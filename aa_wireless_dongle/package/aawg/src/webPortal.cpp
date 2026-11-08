@@ -841,7 +841,7 @@ void handlePostActions(int clientFd, const std::string& body) {
         sendHttpResponse(clientFd, "200 OK", "application/json; charset=utf-8",
                          "{\"ok\":true,\"message\":\"Cleared Bluetooth pairings and restarted aawgd.\"}");
     } else if (action == "capture_snapshot_now") {
-        (void)system("(flock -x /var/run/boot_mount.lock -c '/bin/mount -o remount,rw /boot 2>/dev/null && { echo \"=== MANUAL WEB SNAPSHOT $(date) ===\"; /usr/bin/bluetoothctl show 2>/dev/null; /sbin/ip addr 2>/dev/null; cat /var/log/messages 2>/dev/null; /bin/dmesg 2>/dev/null; } > /boot/car_debug.log 2>&1 && sync && /bin/mount -o remount,ro /boot 2>/dev/null') </dev/null >/dev/null 2>&1 &");
+        (void)system("(flock -x /var/run/boot_mount.lock -c '/bin/mount -o remount,rw /boot 2>/dev/null && { echo \"=== MANUAL WEB SNAPSHOT $(date) ===\"; /usr/bin/bluetoothctl show 2>/dev/null; /sbin/ip addr 2>/dev/null; ls -la /var/run/garage_* 2>/dev/null; cat /var/run/garage_env 2>/dev/null; cat /var/log/messages 2>/dev/null; /bin/dmesg 2>/dev/null; } > /boot/car_debug.log 2>&1 && sync && /bin/mount -o remount,ro /boot 2>/dev/null') </dev/null >/dev/null 2>&1 &");
         sendHttpResponse(clientFd, "200 OK", "application/json; charset=utf-8",
                          "{\"ok\":true,\"message\":\"Captured diagnostic snapshot to /boot/car_debug.log.\"}");
     } else if (action == "reboot") {
