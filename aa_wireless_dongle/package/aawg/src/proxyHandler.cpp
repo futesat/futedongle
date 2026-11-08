@@ -122,6 +122,7 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
         !s_garage_opener_fired_this_boot.load() &&
         (access("/var/run/garage_in_range", F_OK) == 0) &&
         (access("/var/run/garage_opened_once", F_OK) != 0);
+    int video_channel_id = -1;
     int foreground_video_frames = 0;
 
     while (!should_exit) {
@@ -168,19 +169,35 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
             break;
         }
 
-        if (monitor_garage_video && len > 2000) {
-            ++foreground_video_frames;
-            if (foreground_video_frames >= 15) {
-                bool expected = false;
-                if (s_garage_opener_fired_this_boot.compare_exchange_strong(expected, true)) {
-                    Logger::instance()->info(
-                        "Foreground Android Auto video detected in garage (%d frames); triggering garage door opener\n",
-                        foreground_video_frames);
-                    m_triggered_garage_opener = true;
-                    break;
+        // Detect active H.264 video projection on the MIB3 display:
+        // - buffer[0] != 0 excludes Control/SSL/ServiceDiscovery (Channel 0).
+        // - (buffer[1] & 0x0C) == 0x08 requires ENCRYPTED (0x08) and non-CONTROL (0x04 == 0).
+        // - Locking onto video_channel_id requires an H.264 IDR keyframe/large slice (len > 10000),
+        //   which uncompressed PCM/AAC background audio frames (<= 8 KB) never reach.
+        if (monitor_garage_video && len > 800 && buffer[0] != 0 && (buffer[1] & 0x0C) == 0x08) {
+            if (video_channel_id < 0 && len > 10000) {
+                video_channel_id = static_cast<int>(buffer[0]);
+            }
+            if (video_channel_id == static_cast<int>(buffer[0])) {
+                ++foreground_video_frames;
+                if (foreground_video_frames >= 25) {
+                    bool expected = false;
+                    if (s_garage_opener_fired_this_boot.compare_exchange_strong(expected, true)) {
+                        Logger::instance()->info(
+                            "Foreground Android Auto H.264 video detected in garage (ch=%d, %d frames); triggering garage door opener\n",
+                            video_channel_id, foreground_video_frames);
+                        m_triggered_garage_opener = true;
+                        break;
+                    }
                 }
             }
         }
+    }
+
+    if (direction == ProxyDirection::USB_to_TCP) {
+        m_usb_tcp_done = true;
+    } else {
+        m_tcp_usb_done = true;
     }
 
     stopForwarding(should_exit);
@@ -190,11 +207,16 @@ void AAWProxy::stopForwarding(std::atomic<bool>& should_exit) {
     Logger::instance()->info("Interrupting threads to stop forwarding\n");
     should_exit = true;
 
-    if (m_usb_tcp_thread) {
+    if (m_tcp_fd >= 0) {
+        shutdown(m_tcp_fd, SHUT_RDWR);
+    }
+
+    const pthread_t self = pthread_self();
+    if (m_usb_tcp_thread && !m_usb_tcp_done.load() && m_usb_tcp_thread->native_handle() != self) {
         pthread_kill(m_usb_tcp_thread->native_handle(), SIGUSR1);
     }
 
-    if (m_tcp_usb_thread) {
+    if (m_tcp_usb_thread && !m_tcp_usb_done.load() && m_tcp_usb_thread->native_handle() != self) {
         pthread_kill(m_tcp_usb_thread->native_handle(), SIGUSR1);
     }
 }
@@ -435,8 +457,22 @@ void AAWProxy::handleClient(int server_sock) {
 
     Logger::instance()->info("Forwarding data between TCP and USB\n");
     std::atomic<bool> should_exit = false;
+    m_usb_tcp_done = false;
+    m_tcp_usb_done = false;
     m_usb_tcp_thread = std::thread(&AAWProxy::forward, this, ProxyDirection::USB_to_TCP, std::ref(should_exit));
     m_tcp_usb_thread = std::thread(&AAWProxy::forward, this, ProxyDirection::TCP_to_USB, std::ref(should_exit));
+
+    while (!m_usb_tcp_done.load() || !m_tcp_usb_done.load()) {
+        if (should_exit.load()) {
+            if (m_usb_tcp_thread && !m_usb_tcp_done.load()) {
+                pthread_kill(m_usb_tcp_thread->native_handle(), SIGUSR1);
+            }
+            if (m_tcp_usb_thread && !m_tcp_usb_done.load()) {
+                pthread_kill(m_tcp_usb_thread->native_handle(), SIGUSR1);
+            }
+        }
+        usleep(20000);
+    }
 
     m_usb_tcp_thread->join();
     m_usb_tcp_thread = std::nullopt;

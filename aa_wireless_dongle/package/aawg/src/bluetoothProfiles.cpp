@@ -54,8 +54,22 @@ public:
 
         MessageId messageId = ReadMessage();
 
+        // If the phone is already associated with the AP, it may send WifiStartResponse first
+        if (messageId == MessageId::WifiStartResponse) {
+            struct timeval shortTv = {
+                .tv_sec = 1,
+                .tv_usec = 0,
+            };
+            setsockopt(m_fd, SOL_SOCKET, SO_RCVTIMEO, &shortTv, sizeof(shortTv));
+            messageId = ReadMessage();
+            setsockopt(m_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+            if (messageId == MessageId::WifiConnectStatus || messageId == MessageId::Invalid) {
+                return;
+            }
+        }
+
         if (messageId != MessageId::WifiInfoRequest) {
-            Logger::instance()->info("Expected WifiInfoRequest, got %s (%d). Abort.\n", MessageName(messageId), messageId);
+            Logger::instance()->info("Expected WifiInfoRequest, got %s (%d). Abort.\n", MessageName(messageId).c_str(), messageId);
             return;
         }
 
@@ -69,7 +83,13 @@ public:
 
         SendMessage(MessageId::WifiInfoResponse, &wifiInfoResponse);
 
-        if (ReadMessage() != MessageId::Invalid) {
+        MessageId postInfoMsg = ReadMessage();
+        if (postInfoMsg != MessageId::Invalid && postInfoMsg != MessageId::WifiConnectStatus) {
+            struct timeval shortTv = {
+                .tv_sec = 0,
+                .tv_usec = 500000,
+            };
+            setsockopt(m_fd, SOL_SOCKET, SO_RCVTIMEO, &shortTv, sizeof(shortTv));
             ReadMessage();
         }
     }
@@ -210,7 +230,6 @@ void AAWirelessProfile::NewConnection(DBus::Path path, std::shared_ptr<DBus::Fil
 
     BluetoothHandler::instance().notifyHandoffStarted();
     AAWirelessLauncher(fd->descriptor()).launch();
-    BluetoothHandler::instance().notifyHandoffStarted();
     Logger::instance()->info("Bluetooth launch sequence completed\n");
 }
 
