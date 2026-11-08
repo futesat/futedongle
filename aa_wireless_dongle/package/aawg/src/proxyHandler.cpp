@@ -203,15 +203,17 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
         // Detect active H.264 video projection on the MIB3 display:
         // - buffer[0] != 0 excludes Control/SSL/ServiceDiscovery (Channel 0).
         // - (buffer[1] & 0x0C) == 0x08 requires ENCRYPTED (0x08) and non-CONTROL (0x04 == 0).
-        // - Locking onto video_channel_id requires an H.264 IDR keyframe/large slice (len > 10000),
+        // - Locking onto video_channel_id requires an H.264 IDR keyframe/large slice (len > 9000),
         //   which uncompressed PCM/AAC background audio frames (<= 8 KB) never reach.
-        if (monitor_garage_video && len > 800 && buffer[0] != 0 && (buffer[1] & 0x0C) == 0x08) {
-            if (video_channel_id < 0 && len > 10000) {
+        // - Once video_channel_id is locked, count all encrypted media frames (len >= 64) on that
+        //   channel so stationary P-frames in a parked car still trigger in ~0.4s (12 frames).
+        if (monitor_garage_video && buffer[0] != 0 && (buffer[1] & 0x0C) == 0x08) {
+            if (video_channel_id < 0 && len > 9000) {
                 video_channel_id = static_cast<int>(buffer[0]);
             }
-            if (video_channel_id == static_cast<int>(buffer[0])) {
+            if (video_channel_id == static_cast<int>(buffer[0]) && len >= 64) {
                 ++foreground_video_frames;
-                if (foreground_video_frames >= 25) {
+                if (foreground_video_frames >= 12) {
                     bool expected = false;
                     if (s_garage_opener_fired_this_boot.compare_exchange_strong(expected, true)) {
                         Logger::instance()->info(

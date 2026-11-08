@@ -76,20 +76,6 @@ void UsbManager::switchToAccessoryGadget() {
     std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 0.1 second, keep the gadget disabled for a short time to let the host recognize the change
     enableGadget(accessoryGadgetName);
 
-    // Wait up to 3s for the USB host (head unit) to complete SET_CONFIGURATION
-    // so f_accessory has dev->online == 1 before write(/dev/usb_accessory) runs.
-    if (!s_udcName.empty()) {
-        const std::string statePath = "/sys/class/udc/" + s_udcName + "/state";
-        for (int i = 0; i < 150; ++i) {
-            std::ifstream stateFile(statePath);
-            std::string state;
-            if (stateFile.is_open() && std::getline(stateFile, state) && state == "configured") {
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(20));
-        }
-    }
-
     Logger::instance()->info("USB Manager: Switched to accessory gadget from default\n");
 }
 
@@ -132,17 +118,35 @@ bool UsbManager::enableDefaultAndWaitForAccessory(std::chrono::milliseconds time
 
     Logger::instance()->info("USB Manager: Enabled default gadget\n");
 
+    bool switched = false;
     if (timeout == std::chrono::milliseconds(0)) {
         accessoryPromise->get_future().wait();
-        return true;
+        switched = true;
     } else {
         std::future_status status = accessoryPromise->get_future().wait_for(timeout);
 
         if (status == std::future_status::ready) {
-            return true;
+            switched = true;
         } else {
             Logger::instance()->info("USB Manager: Timeout waiting for accessory start request\n");
             return false;
         }
     }
+
+    // Wait up to 3s on the caller thread (outside UeventMonitor's mutex) for the
+    // USB host (head unit) to complete SET_CONFIGURATION so f_accessory has
+    // dev->online == 1 before write(/dev/usb_accessory) runs.
+    if (switched && !s_udcName.empty()) {
+        const std::string statePath = "/sys/class/udc/" + s_udcName + "/state";
+        for (int i = 0; i < 150; ++i) {
+            std::ifstream stateFile(statePath);
+            std::string state;
+            if (stateFile.is_open() && std::getline(stateFile, state) && state == "configured") {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
+
+    return switched;
 }

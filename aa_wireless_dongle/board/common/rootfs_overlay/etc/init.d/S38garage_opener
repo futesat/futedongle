@@ -362,10 +362,16 @@ probe_garage_at_boot() {
 		: > "$GARAGE_ENV_FILE"
 	fi
 
+	GARAGE_GW_MAC=""
+	if [ -n "${GARAGE_GW:-}" ]; then
+		GARAGE_GW_MAC=$(awk -v ip="$GARAGE_GW" '$1 == ip && $4 != "00:00:00:00:00:00" && $6 == "wlan0" {print $4; exit}' /proc/net/arp 2>/dev/null)
+	fi
+
 	{
 		printf 'GARAGE_FREQ="%s"\n' "$GARAGE_FREQ"
 		printf 'GARAGE_TARGET_IP="%s"\n' "$UDP_HOST"
 		printf 'GARAGE_TARGET_MAC="%s"\n' "$GARAGE_TARGET_MAC"
+		printf 'GARAGE_GW_MAC="%s"\n' "$GARAGE_GW_MAC"
 	} >> "$GARAGE_ENV_FILE"
 
 	touch "$GARAGE_IN_RANGE_FLAG"
@@ -396,6 +402,7 @@ fire_garage_at_runtime() {
 	GARAGE_IP=""
 	GARAGE_SUBNET=""
 	GARAGE_GW=""
+	GARAGE_GW_MAC=""
 	GARAGE_FREQ=""
 	GARAGE_TARGET_IP=""
 	GARAGE_TARGET_MAC=""
@@ -479,6 +486,9 @@ fire_garage_at_runtime() {
 		if ifconfig wlan0 "$GARAGE_IP" ${GARAGE_SUBNET:+netmask "$GARAGE_SUBNET"} up 2>/dev/null; then
 			if [ -n "$GARAGE_GW" ]; then
 				ip route add default via "$GARAGE_GW" dev wlan0 2>/dev/null || true
+				if [ -n "$GARAGE_GW_MAC" ]; then
+					ip neigh replace "$GARAGE_GW" lladdr "$GARAGE_GW_MAC" nud reachable dev wlan0 2>/dev/null || true
+				fi
 			fi
 			if [ -n "$GARAGE_TARGET_IP" ] && [ -n "$GARAGE_TARGET_MAC" ]; then
 				ip neigh replace "$GARAGE_TARGET_IP" lladdr "$GARAGE_TARGET_MAC" nud reachable dev wlan0 2>/dev/null || true
