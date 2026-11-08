@@ -41,7 +41,7 @@ bool isArpResolvedOnWlan0(const std::string &targetIp) {
     if (device != "wlan0") {
       continue;
     }
-    if (flags == "0x0") {
+    if (flags == "0x0" || hwAddr == "00:00:00:00:00:00") {
       anyPendingOnWlan0 = true;
     } else {
       anyCompleteOnWlan0 = true;
@@ -118,6 +118,15 @@ int main(int argc, char *argv[]) {
   int broadcastEnable = 1;
   (void)setsockopt(sock, SOL_SOCKET, SO_BROADCAST, &broadcastEnable,
                    sizeof(broadcastEnable));
+#ifdef SO_BINDTODEVICE
+  (void)setsockopt(sock, SOL_SOCKET, SO_BINDTODEVICE, "wlan0", 5);
+#endif
+  int tosVoice = 0xB8; // DSCP EF -> 802.11e WMM AC_VO (Voice priority)
+  (void)setsockopt(sock, IPPROTO_IP, IP_TOS, &tosVoice, sizeof(tosVoice));
+#ifdef SO_PRIORITY
+  int skbPrio = 6;
+  (void)setsockopt(sock, SOL_SOCKET, SO_PRIORITY, &skbPrio, sizeof(skbPrio));
+#endif
 
   struct timeval tv {};
   tv.tv_sec = 1;
@@ -153,7 +162,9 @@ int main(int argc, char *argv[]) {
   // WPA2 PTK keys are ready to guard against transient 2.4 GHz RF collisions.
   for (int retry = 0; retry < 3; ++retry) {
     usleep(45000);
-    (void)send(sock, payload, payloadLen, 0);
+    if (send(sock, payload, payloadLen, 0) < 0 && errno == ECONNREFUSED) {
+      (void)send(sock, payload, payloadLen, 0);
+    }
   }
 
   // Allow 120ms for brcmfmac SDIO TX queue and 802.11 ACK completion.

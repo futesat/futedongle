@@ -50,17 +50,22 @@ public:
         wifiStartRequest.set_ip_address(wifiInfo.ipAddress);
         wifiStartRequest.set_port(wifiInfo.port);
 
-        SendMessage(MessageId::WifiStartRequest, &wifiStartRequest);
+        if (!SendMessage(MessageId::WifiStartRequest, &wifiStartRequest)) {
+            BluetoothHandler::instance().clearHandoffInProgress();
+            return;
+        }
 
         MessageId messageId = ReadMessage();
 
-        // If the phone is already associated with the AP, it may send WifiStartResponse first
+        // If the phone is already associated with the AP or transitioning Wi-Fi state,
+        // it may send WifiStartResponse first and follow with WifiInfoRequest up to ~2.5s later.
         if (messageId == MessageId::WifiStartResponse) {
-            struct timeval shortTv = {
-                .tv_sec = 1,
+            BluetoothHandler::instance().notifyHandoffStarted();
+            struct timeval waitInfoTv = {
+                .tv_sec = 3,
                 .tv_usec = 0,
             };
-            setsockopt(m_fd, SOL_SOCKET, SO_RCVTIMEO, &shortTv, sizeof(shortTv));
+            setsockopt(m_fd, SOL_SOCKET, SO_RCVTIMEO, &waitInfoTv, sizeof(waitInfoTv));
             messageId = ReadMessage();
             setsockopt(m_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
             if (messageId == MessageId::WifiConnectStatus || messageId == MessageId::Invalid) {
@@ -70,6 +75,7 @@ public:
 
         if (messageId != MessageId::WifiInfoRequest) {
             Logger::instance()->info("Expected WifiInfoRequest, got %s (%d). Abort.\n", MessageName(messageId).c_str(), messageId);
+            BluetoothHandler::instance().clearHandoffInProgress();
             return;
         }
 
@@ -81,7 +87,12 @@ public:
         wifiInfoResponse.set_security_mode(wifiInfo.securityMode);
         wifiInfoResponse.set_access_point_type(wifiInfo.accessPointType);
 
-        SendMessage(MessageId::WifiInfoResponse, &wifiInfoResponse);
+        if (!SendMessage(MessageId::WifiInfoResponse, &wifiInfoResponse)) {
+            BluetoothHandler::instance().clearHandoffInProgress();
+            return;
+        }
+
+        BluetoothHandler::instance().notifyHandoffStarted();
 
         struct timeval postInfoTv = {
             .tv_sec = 1,
@@ -159,7 +170,7 @@ private:
         }
     }
 
-    void SendMessage(MessageId messageId, google::protobuf::MessageLite* message) {
+    bool SendMessage(MessageId messageId, google::protobuf::MessageLite* message) {
         uint16_t messageSize = (uint16_t)message->ByteSizeLong();
         uint16_t length = messageSize + 4;
 
@@ -183,6 +194,7 @@ private:
         }
 
         delete[] buffer;
+        return wrote == static_cast<ssize_t>(length);
     }
 
     MessageId ReadMessage() {
