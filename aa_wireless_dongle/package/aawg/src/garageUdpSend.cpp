@@ -149,17 +149,17 @@ int main(int argc, char *argv[]) {
     usleep(20000);
   }
 
-  // Send two additional confirmatory UDP datagrams now that Layer-2 ARP is
-  // resolved to guard against transient 2.4 GHz RF collisions.
-  for (int retry = 0; retry < 2; ++retry) {
-    usleep(35000);
+  // Send three additional confirmatory UDP datagrams now that Layer-2 ARP and
+  // WPA2 PTK keys are ready to guard against transient 2.4 GHz RF collisions.
+  for (int retry = 0; retry < 3; ++retry) {
+    usleep(45000);
     (void)send(sock, payload, payloadLen, 0);
   }
 
   // Allow 120ms for brcmfmac SDIO TX queue and 802.11 ACK completion.
   usleep(120000);
 
-  syslog(LOG_INFO, "Sent %zu UDP bytes (3x burst) to %s:%ld", payloadLen,
+  syslog(LOG_INFO, "Sent %zu UDP bytes (4x burst) to %s:%ld", payloadLen,
          resolvedIp, portNum);
   close(sock);
   closelog();
