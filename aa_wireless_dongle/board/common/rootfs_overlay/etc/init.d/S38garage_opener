@@ -14,8 +14,10 @@
 
 export PATH="/sbin:/usr/sbin:/bin:/usr/bin"
 
-if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
+if [ -r /etc/aawgd.conf ]; then
+	set -a
 	. /etc/aawgd.conf
+	set +a
 fi
 
 WPA_PIDFILE="/var/run/garage_wpa.pid"
@@ -116,7 +118,12 @@ restore_ap() {
 	ATTEMPT=1
 	while [ "$ATTEMPT" -le 3 ]; do
 		killall -q hostapd 2>/dev/null || true
-		sleep 0.1
+		H_WAIT=0
+		while pidof hostapd >/dev/null 2>&1 && [ "$H_WAIT" -lt 10 ]; do
+			sleep 0.1
+			H_WAIT=$((H_WAIT + 1))
+		done
+		rm -rf /var/run/hostapd 2>/dev/null || true
 		ifconfig wlan0 10.0.0.1 netmask 255.255.255.0 up 2>/dev/null || true
 		hostapd -B /var/run/hostapd.conf -t -f /var/log/hostapd >/dev/null 2>&1 || true
 
@@ -144,9 +151,23 @@ restore_ap() {
 	# Re-assert 10.0.0.1/24 after hostapd transitions wlan0 into AP mode
 	ifconfig wlan0 10.0.0.1 netmask 255.255.255.0 up 2>/dev/null || true
 
+	# Restart dnsmasq safely: wait for the old process to exit completely before
+	# starting the new one so BusyBox start-stop-daemon never races with SIGTERM.
+	killall -q dnsmasq 2>/dev/null || true
+	D_TICK=0
+	while pidof dnsmasq >/dev/null 2>&1 && [ "$D_TICK" -lt 10 ]; do
+		sleep 0.1
+		D_TICK=$((D_TICK + 1))
+	done
+	if pidof dnsmasq >/dev/null 2>&1; then
+		killall -9 -q dnsmasq 2>/dev/null || true
+		sleep 0.1
+	fi
+	rm -f /var/run/dnsmasq.pid 2>/dev/null || true
 	if [ -x /etc/init.d/S80dnsmasq ]; then
-		/etc/init.d/S80dnsmasq restart >/dev/null 2>&1 || true
-	elif ! pidof dnsmasq >/dev/null 2>&1; then
+		/etc/init.d/S80dnsmasq start >/dev/null 2>&1 || true
+	fi
+	if ! pidof dnsmasq >/dev/null 2>&1; then
 		dnsmasq >/dev/null 2>&1 || true
 	fi
 
@@ -411,6 +432,7 @@ fire_garage_at_runtime() {
 		killall -9 -q hostapd 2>/dev/null || true
 		sleep 0.1
 	fi
+	rm -rf /var/run/hostapd 2>/dev/null || true
 
 	ip route flush dev wlan0 2>/dev/null || true
 	ip addr flush dev wlan0 2>/dev/null || true

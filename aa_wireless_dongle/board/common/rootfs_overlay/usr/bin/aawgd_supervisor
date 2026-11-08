@@ -14,8 +14,10 @@ done
 rfkill unblock bluetooth 2>/dev/null || true
 
 while true; do
-	if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
+	if [ -r /etc/aawgd.conf ]; then
+		set -a
 		. /etc/aawgd.conf
+		set +a
 	fi
 
 	if [ -z "$AAWG_WIFI_PASSWORD" ] && [ -f /var/run/aawgd_wifi_password ]; then
