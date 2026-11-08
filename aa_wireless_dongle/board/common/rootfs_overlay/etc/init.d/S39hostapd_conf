@@ -7,7 +7,12 @@ case "$1" in
 	start)
 		if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
 			echo "Source /etc/aawgd.conf"
+			set -a
 			. /etc/aawgd.conf
+			set +a
+		fi
+		if [ -z "${AAWG_WIFI_PASSWORD}" ] && [ -f /var/run/aawgd_wifi_password ]; then
+			AAWG_WIFI_PASSWORD="$(cat /var/run/aawgd_wifi_password)"
 		fi
 
 		# Wait up to 10s for async brcmfmac SDIO firmware load to create wlan0

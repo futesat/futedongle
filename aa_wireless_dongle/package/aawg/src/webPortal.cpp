@@ -306,6 +306,8 @@ std::string buildStatusJson() {
 
     bool tcpProxyActive = isTcpPortEstablished(5288);
     bool aawgdRunning = isProcessRunning("aawgd");
+    bool garageInRange = (access("/var/run/garage_in_range", F_OK) == 0);
+    bool garageOpenedOnce = (access("/var/run/garage_opened_once", F_OK) == 0);
     int undervoltageCount = countUndervoltageEvents();
 
     // DHCP Leases
@@ -355,6 +357,8 @@ std::string buildStatusJson() {
     out << "\"active_gadget\":\"" << jsonEscape(activeGadget) << "\",";
     out << "\"aawgd_running\":" << (aawgdRunning ? "true" : "false") << ",";
     out << "\"tcp_proxy_active\":" << (tcpProxyActive ? "true" : "false") << ",";
+    out << "\"garage_in_range\":" << (garageInRange ? "true" : "false") << ",";
+    out << "\"garage_opened_once\":" << (garageOpenedOnce ? "true" : "false") << ",";
     out << "\"dhcp_leases\":" << leasesJson.str() << ",";
     out << "\"gte_telemetry\":" << gteTelemetryRaw;
     out << "}";
@@ -781,9 +785,9 @@ void handlePostConfig(int clientFd, const std::string& body) {
     } else {
         confContent << "#AAWG_OBD_BLE_MAC=\n";
     }
-    confContent << "\n######## Boot-Time Garage Door Opener (S38garage_opener) ########\n\n"
-                << "## Connect briefly on power-up to a garage Wi-Fi AP and send a UDP trigger\n"
-                << "## before starting the 5 GHz Android Auto Access Point.\n"
+    confContent << "\n######## Garage Door Opener (S38garage_opener) ########\n\n"
+                << "## Probes the garage Wi-Fi AP at boot (without opening the door on keyfob unlock)\n"
+                << "## and sends the UDP trigger only when Android Auto enters foreground video.\n"
                 << "AAWG_ENABLE_GARAGE_OPEN=" << cfg["AAWG_ENABLE_GARAGE_OPEN"] << "\n"
                 << "AAWG_GARAGE_WIFI_SSID=" << shellQuote(cfg["AAWG_GARAGE_WIFI_SSID"]) << "\n"
                 << "AAWG_GARAGE_WIFI_HIDDEN=" << cfg["AAWG_GARAGE_WIFI_HIDDEN"] << "\n"

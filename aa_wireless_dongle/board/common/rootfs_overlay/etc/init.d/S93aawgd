@@ -13,7 +13,9 @@ case "$1" in
 	start)
 		if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
 			echo "Source /etc/aawgd.conf"
+			set -a
 			. /etc/aawgd.conf
+			set +a
 		fi
 
 		printf "Starting aawgd (supervised): "
@@ -23,11 +25,20 @@ case "$1" in
 		;;
 	stop)
 		printf "Stopping aawgd: "
-		start-stop-daemon -K -q -p "$PIDFILE"
-		killall -q aawgd
+		start-stop-daemon -K -q -p "$PIDFILE" 2>/dev/null || true
+		killall -q aawgd_supervisor aawgd 2>/dev/null || true
+		S_TICK=0
+		while { pidof aawgd_supervisor >/dev/null 2>&1 || pidof aawgd >/dev/null 2>&1; } && [ "$S_TICK" -lt 15 ]; do
+			sleep 0.1
+			S_TICK=$((S_TICK + 1))
+		done
+		if pidof aawgd_supervisor >/dev/null 2>&1 || pidof aawgd >/dev/null 2>&1; then
+			killall -9 -q aawgd_supervisor aawgd 2>/dev/null || true
+			sleep 0.1
+		fi
 		rm -f "$PIDFILE"
-		RETVAL=$?
-		[ $RETVAL = 0 ] && echo "OK" || echo "FAIL"
+		RETVAL=0
+		echo "OK"
 		;;
 	restart)
 		$0 stop
