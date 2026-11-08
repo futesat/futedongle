@@ -83,6 +83,11 @@ public:
 
         SendMessage(MessageId::WifiInfoResponse, &wifiInfoResponse);
 
+        struct timeval postInfoTv = {
+            .tv_sec = 1,
+            .tv_usec = 500000,
+        };
+        setsockopt(m_fd, SOL_SOCKET, SO_RCVTIMEO, &postInfoTv, sizeof(postInfoTv));
         MessageId postInfoMsg = ReadMessage();
         if (postInfoMsg != MessageId::Invalid && postInfoMsg != MessageId::WifiConnectStatus) {
             struct timeval shortTv = {

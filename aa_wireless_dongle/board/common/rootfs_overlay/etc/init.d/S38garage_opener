@@ -114,6 +114,22 @@ restore_ap() {
 		/etc/init.d/S39hostapd_conf start >/dev/null 2>&1 || true
 	fi
 
+	# Ensure any lingering dnsmasq is stopped before bringing the AP up so we
+	# never kill/restart dnsmasq after hostapd is already broadcasting beacons.
+	if pidof dnsmasq >/dev/null 2>&1; then
+		killall -q dnsmasq 2>/dev/null || true
+		D_TICK=0
+		while pidof dnsmasq >/dev/null 2>&1 && [ "$D_TICK" -lt 10 ]; do
+			sleep 0.1
+			D_TICK=$((D_TICK + 1))
+		done
+		if pidof dnsmasq >/dev/null 2>&1; then
+			killall -9 -q dnsmasq 2>/dev/null || true
+			sleep 0.1
+		fi
+		rm -f /var/run/dnsmasq.pid 2>/dev/null || true
+	fi
+
 	AP_UP=0
 	ATTEMPT=1
 	while [ "$ATTEMPT" -le 3 ]; do
@@ -126,6 +142,18 @@ restore_ap() {
 		rm -rf /var/run/hostapd 2>/dev/null || true
 		ifconfig wlan0 10.0.0.1 netmask 255.255.255.0 up 2>/dev/null || true
 		hostapd -B /var/run/hostapd.conf -t -f /var/log/hostapd >/dev/null 2>&1 || true
+
+		# Start dnsmasq immediately while hostapd initializes the 5 GHz radio so
+		# UDP port 67 is already listening before the first AP beacon goes out.
+		if ! pidof dnsmasq >/dev/null 2>&1; then
+			rm -f /var/run/dnsmasq.pid 2>/dev/null || true
+			if [ -x /etc/init.d/S80dnsmasq ]; then
+				/etc/init.d/S80dnsmasq start >/dev/null 2>&1 || true
+			fi
+			if ! pidof dnsmasq >/dev/null 2>&1; then
+				dnsmasq >/dev/null 2>&1 || true
+			fi
+		fi
 
 		H_TICK=0
 		while [ "$H_TICK" -lt 15 ]; do
@@ -150,23 +178,6 @@ restore_ap() {
 
 	# Re-assert 10.0.0.1/24 after hostapd transitions wlan0 into AP mode
 	ifconfig wlan0 10.0.0.1 netmask 255.255.255.0 up 2>/dev/null || true
-
-	# Restart dnsmasq safely: wait for the old process to exit completely before
-	# starting the new one so BusyBox start-stop-daemon never races with SIGTERM.
-	killall -q dnsmasq 2>/dev/null || true
-	D_TICK=0
-	while pidof dnsmasq >/dev/null 2>&1 && [ "$D_TICK" -lt 10 ]; do
-		sleep 0.1
-		D_TICK=$((D_TICK + 1))
-	done
-	if pidof dnsmasq >/dev/null 2>&1; then
-		killall -9 -q dnsmasq 2>/dev/null || true
-		sleep 0.1
-	fi
-	rm -f /var/run/dnsmasq.pid 2>/dev/null || true
-	if [ -x /etc/init.d/S80dnsmasq ]; then
-		/etc/init.d/S80dnsmasq start >/dev/null 2>&1 || true
-	fi
 	if ! pidof dnsmasq >/dev/null 2>&1; then
 		dnsmasq >/dev/null 2>&1 || true
 	fi
@@ -354,6 +365,10 @@ probe_garage_at_boot() {
 	# Pre-resolve Layer-2 ARP MAC of UDP_HOST via ICMP without sending UDP to port 9876
 	ping -c 1 -W 1 "$UDP_HOST" >/dev/null 2>&1 || true
 	GARAGE_TARGET_MAC=$(awk -v ip="$UDP_HOST" '$1 == ip && $4 != "00:00:00:00:00:00" && $6 == "wlan0" {print $4; exit}' /proc/net/arp 2>/dev/null)
+	if [ -z "$GARAGE_TARGET_MAC" ]; then
+		ping -c 1 -W 1 "$UDP_HOST" >/dev/null 2>&1 || true
+		GARAGE_TARGET_MAC=$(awk -v ip="$UDP_HOST" '$1 == ip && $4 != "00:00:00:00:00:00" && $6 == "wlan0" {print $4; exit}' /proc/net/arp 2>/dev/null)
+	fi
 
 	if [ -f "$GARAGE_DHCP_ENV" ]; then
 		. "$GARAGE_DHCP_ENV"
@@ -428,18 +443,18 @@ fire_garage_at_runtime() {
 	) </dev/null >/dev/null 2>&1 &
 	WATCHDOG_PID=$!
 
-	log_info "Stopping 5 GHz hostapd to transmit garage UDP trigger over '${SSID}'..."
-	killall -q hostapd 2>/dev/null || true
+	log_info "Stopping 5 GHz hostapd and dnsmasq to transmit garage UDP trigger over '${SSID}'..."
+	killall -q hostapd dnsmasq 2>/dev/null || true
 	H_CNT=0
-	while pidof hostapd >/dev/null 2>&1 && [ "$H_CNT" -lt 10 ]; do
+	while { pidof hostapd >/dev/null 2>&1 || pidof dnsmasq >/dev/null 2>&1; } && [ "$H_CNT" -lt 10 ]; do
 		sleep 0.1
 		H_CNT=$((H_CNT + 1))
 	done
-	if pidof hostapd >/dev/null 2>&1; then
-		killall -9 -q hostapd 2>/dev/null || true
+	if pidof hostapd >/dev/null 2>&1 || pidof dnsmasq >/dev/null 2>&1; then
+		killall -9 -q hostapd dnsmasq 2>/dev/null || true
 		sleep 0.1
 	fi
-	rm -rf /var/run/hostapd 2>/dev/null || true
+	rm -rf /var/run/hostapd /var/run/dnsmasq.pid 2>/dev/null || true
 
 	ip route flush dev wlan0 2>/dev/null || true
 	ip addr flush dev wlan0 2>/dev/null || true

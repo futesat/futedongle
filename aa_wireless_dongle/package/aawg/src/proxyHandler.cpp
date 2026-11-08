@@ -154,6 +154,8 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
         (access("/var/run/garage_in_range", F_OK) == 0) &&
         (access("/var/run/garage_opened_once", F_OK) != 0);
     int video_channel_id = -1;
+    ssize_t video_idr_len = 0;
+    bool video_size_varied = false;
     int foreground_video_frames = 0;
 
     while (!should_exit) {
@@ -203,17 +205,25 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
         // Detect active H.264 video projection on the MIB3 display:
         // - buffer[0] != 0 excludes Control/SSL/ServiceDiscovery (Channel 0).
         // - (buffer[1] & 0x0C) == 0x08 requires ENCRYPTED (0x08) and non-CONTROL (0x04 == 0).
-        // - Locking onto video_channel_id requires an H.264 IDR keyframe/large slice (len > 9000),
-        //   which uncompressed PCM/AAC background audio frames (<= 8 KB) never reach.
-        // - Once video_channel_id is locked, count all encrypted media frames (len >= 64) on that
-        //   channel so stationary P-frames in a parked car still trigger in ~0.4s (12 frames).
+        // - Locking onto video_channel_id requires either a fragmented AAP frame
+        //   ((buffer[1] & 0x03) == 0x01, > 16 KB keyframe) or len > 4200 (which covers even
+        //   low-bitrate dark-mode 800x480 H.264 IDR keyframes while excluding 20ms 48kHz
+        //   stereo PCM audio at 3902 bytes and AAC audio < 800 bytes).
+        // - Requiring at least one subsequent frame on that channel to differ in byte length
+        //   by > 64 bytes from the initial keyframe mathematically rules out fixed-size PCM
+        //   audio buffers while still triggering in ~0.4s (12 frames) on a parked static screen.
         if (monitor_garage_video && buffer[0] != 0 && (buffer[1] & 0x0C) == 0x08) {
-            if (video_channel_id < 0 && len > 9000) {
+            const bool is_first_frag = ((buffer[1] & 0x03) == 0x01);
+            if (video_channel_id < 0 && (is_first_frag || len > 4200)) {
                 video_channel_id = static_cast<int>(buffer[0]);
+                video_idr_len = len;
             }
             if (video_channel_id == static_cast<int>(buffer[0]) && len >= 64) {
+                if ((len > video_idr_len + 64) || (video_idr_len > len + 64)) {
+                    video_size_varied = true;
+                }
                 ++foreground_video_frames;
-                if (foreground_video_frames >= 12) {
+                if (foreground_video_frames >= 12 && video_size_varied) {
                     bool expected = false;
                     if (s_garage_opener_fired_this_boot.compare_exchange_strong(expected, true)) {
                         Logger::instance()->info(
