@@ -22,6 +22,7 @@ fi
 
 WPA_PIDFILE="/var/run/garage_wpa.pid"
 WPA_CONF="/var/run/garage_wpa.conf"
+WPA_LOG="/var/run/garage_wpa.log"
 UDHCPC_PIDFILE="/var/run/garage_udhcpc.pid"
 UDHCPC_SCRIPT="/var/run/garage_udhcpc.script"
 GARAGE_DHCP_ENV="/var/run/garage_dhcp.env"
@@ -58,6 +59,7 @@ kill_wpa_and_wait() {
 		killall -9 -q wpa_supplicant 2>/dev/null || true
 		sleep 0.2
 	fi
+	rm -f "$WPA_LOG"
 }
 
 cleanup() {
@@ -79,7 +81,7 @@ cleanup() {
 
 	kill_wpa_and_wait
 
-	rm -f "$WPA_CONF" "$UDHCPC_SCRIPT" "$GARAGE_DHCP_ENV" /tmp/resolv.conf
+	rm -f "$WPA_CONF" "$WPA_LOG" "$UDHCPC_SCRIPT" "$GARAGE_DHCP_ENV" /tmp/resolv.conf
 
 	iw dev wlan0 disconnect 2>/dev/null || true
 	ip route flush dev wlan0 2>/dev/null || true
@@ -247,7 +249,8 @@ wait_for_wpa_connection() {
 	TICK=0
 	while [ "$TICK" -lt "$MAX_TICKS" ]; do
 		if [ "$(cat /sys/class/net/wlan0/carrier 2>/dev/null)" = "1" ] && \
-		   iw dev wlan0 link 2>/dev/null | grep -q "^Connected to "; then
+		   iw dev wlan0 link 2>/dev/null | grep -q "^Connected to " && \
+		   grep -q "CTRL-EVENT-CONNECTED" "$WPA_LOG" 2>/dev/null; then
 			return 0
 		fi
 		sleep 0.1
@@ -336,11 +339,13 @@ probe_garage_at_boot() {
 		iw reg set "${AAWG_COUNTRY_CODE}" 2>/dev/null || true
 	fi
 	ip link set wlan0 up 2>/dev/null || true
+	iw dev wlan0 set power_save off 2>/dev/null || true
 
 	write_wpa_conf "$FULL_FREQ_LIST"
 
+	rm -f "$WPA_LOG"
 	log_info "Probing garage Wi-Fi '${SSID}' at boot (hidden=${SCAN_SSID}, band=${BAND}, timeout=${TIMEOUT_SEC}s)..."
-	if ! wpa_supplicant -D nl80211 -i wlan0 -c "$WPA_CONF" -P "$WPA_PIDFILE" -B >/dev/null 2>&1; then
+	if ! wpa_supplicant -D nl80211 -i wlan0 -c "$WPA_CONF" -P "$WPA_PIDFILE" -f "$WPA_LOG" -B >/dev/null 2>&1; then
 		log_info "Failed to launch wpa_supplicant during boot probe."
 		return 0
 	fi
@@ -466,12 +471,14 @@ fire_garage_at_runtime() {
 		iw reg set "${AAWG_COUNTRY_CODE}" 2>/dev/null || true
 	fi
 	ip link set wlan0 up 2>/dev/null || true
+	iw dev wlan0 set power_save off 2>/dev/null || true
 
 	CONNECTED=0
 	# Fast single-channel association if frequency was cached at boot
 	if [ -n "$GARAGE_FREQ" ]; then
+		rm -f "$WPA_LOG"
 		write_wpa_conf "freq_list=${GARAGE_FREQ}"
-		if wpa_supplicant -D nl80211 -i wlan0 -c "$WPA_CONF" -P "$WPA_PIDFILE" -B >/dev/null 2>&1; then
+		if wpa_supplicant -D nl80211 -i wlan0 -c "$WPA_CONF" -P "$WPA_PIDFILE" -f "$WPA_LOG" -B >/dev/null 2>&1; then
 			if wait_for_wpa_connection 25; then
 				CONNECTED=1
 			else
@@ -482,8 +489,9 @@ fire_garage_at_runtime() {
 	fi
 
 	if [ "$CONNECTED" != "1" ]; then
+		rm -f "$WPA_LOG"
 		write_wpa_conf "$FULL_FREQ_LIST"
-		if wpa_supplicant -D nl80211 -i wlan0 -c "$WPA_CONF" -P "$WPA_PIDFILE" -B >/dev/null 2>&1; then
+		if wpa_supplicant -D nl80211 -i wlan0 -c "$WPA_CONF" -P "$WPA_PIDFILE" -f "$WPA_LOG" -B >/dev/null 2>&1; then
 			if wait_for_wpa_connection $((TIMEOUT_SEC * 10)); then
 				CONNECTED=1
 			fi
