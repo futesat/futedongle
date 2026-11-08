@@ -53,14 +53,9 @@ int main(void) {
 
         UsbManager::instance().disableGadget();
 
-        if (connectionStrategy != ConnectionStrategy::DONGLE_MODE) {
-            if (proxy.didTriggerGarageOpener()) {
-                // Brief 500ms settle after 5 GHz AP restoration for fast phone reconnect
-                usleep(500000);
-            } else {
-                // sleep for a couple of seconds before retrying
-                sleep(2);
-            }
+        if (connectionStrategy != ConnectionStrategy::DONGLE_MODE && !proxy.didTriggerGarageOpener()) {
+            // sleep for a couple of seconds before retrying
+            sleep(2);
         }
     }
 

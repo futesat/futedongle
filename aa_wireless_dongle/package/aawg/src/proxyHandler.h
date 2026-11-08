@@ -39,4 +39,6 @@ private:
 
     std::atomic<bool> m_log_communication = false;
     std::atomic<bool> m_triggered_garage_opener = false;
+    std::atomic<bool> m_usb_tcp_done = false;
+    std::atomic<bool> m_tcp_usb_done = false;
 };
