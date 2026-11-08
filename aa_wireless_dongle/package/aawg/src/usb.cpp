@@ -1,6 +1,8 @@
 #include <dirent.h>
+#include <fstream>
 #include <string.h>
 #include <future>
+#include <thread>
 
 #include "common.h"
 #include "uevent.h"
@@ -73,6 +75,20 @@ void UsbManager::switchToAccessoryGadget() {
     disableGadget(defaultGadgetName);
     std::this_thread::sleep_for(std::chrono::milliseconds(100)); // 0.1 second, keep the gadget disabled for a short time to let the host recognize the change
     enableGadget(accessoryGadgetName);
+
+    // Wait up to 3s for the USB host (head unit) to complete SET_CONFIGURATION
+    // so f_accessory has dev->online == 1 before write(/dev/usb_accessory) runs.
+    if (!s_udcName.empty()) {
+        const std::string statePath = "/sys/class/udc/" + s_udcName + "/state";
+        for (int i = 0; i < 150; ++i) {
+            std::ifstream stateFile(statePath);
+            std::string state;
+            if (stateFile.is_open() && std::getline(stateFile, state) && state == "configured") {
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+        }
+    }
 
     Logger::instance()->info("USB Manager: Switched to accessory gadget from default\n");
 }
