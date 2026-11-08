@@ -3,7 +3,9 @@
 # aawgd_supervisor - Process supervisor to ensure aawgd auto-respawns
 #
 
-trap 'kill -TERM $PID 2>/dev/null; exit 0' TERM INT
+PID=""
+WAIT_SLEEP=""
+trap 'kill -TERM $PID $WAIT_SLEEP 2>/dev/null || true; exit 0' TERM INT
 
 # Wait up to 10s for Bluetooth HCI adapter before initial start
 WAIT_COUNT=0
@@ -30,6 +32,9 @@ while true; do
 	STATUS=$?
 
 	logger -t aawgd-supervisor "aawgd exited with status $STATUS. Respawning in 2 seconds..."
-	sleep 2
+	sleep 2 &
+	WAIT_SLEEP=$!
+	wait $WAIT_SLEEP 2>/dev/null || true
+	WAIT_SLEEP=""
 done
 
