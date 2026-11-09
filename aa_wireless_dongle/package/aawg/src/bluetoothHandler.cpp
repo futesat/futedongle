@@ -270,7 +270,12 @@ bool BluetoothHandler::connectDevice() {
                 try {
                     connectProfile(HSP_AG_UUID);
                 } catch (DBus::Error& hspErr) {
-                    Logger::instance()->info("ConnectProfile(HSP_AG) failed (%s), falling back to Device1.Connect()\n", hspErr.what());
+                    std::string errMsg = hspErr.what() ? hspErr.what() : "";
+                    if (errMsg.find("page-timeout") != std::string::npos ||
+                        errMsg.find("Host is down") != std::string::npos) {
+                        throw;
+                    }
+                    Logger::instance()->info("ConnectProfile(HSP_AG) failed (%s), falling back to Device1.Connect()\n", errMsg.c_str());
                     connectDeviceAll();
                 }
             }

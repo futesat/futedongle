@@ -87,12 +87,12 @@ cleanup() {
 
 	rm -f "$WPA_CONF" "$WPA_LOG" "$UDHCPC_SCRIPT" "$GARAGE_DHCP_ENV" /tmp/resolv.conf
 
-	iw dev wlan0 disconnect 2>/dev/null || true
-	ip route flush dev wlan0 2>/dev/null || true
-	ip addr flush dev wlan0 2>/dev/null || true
-	ip neigh flush dev wlan0 2>/dev/null || true
-	ip link set wlan0 down 2>/dev/null || true
-	iw dev wlan0 set type managed 2>/dev/null || true
+	iw dev wlan0 disconnect >/dev/null 2>&1 || true
+	ip route flush dev wlan0 >/dev/null 2>&1 || true
+	ip addr flush dev wlan0 >/dev/null 2>&1 || true
+	ip neigh flush dev wlan0 >/dev/null 2>&1 || true
+	ip link set wlan0 down >/dev/null 2>&1 || true
+	iw dev wlan0 set type managed >/dev/null 2>&1 || true
 
 	# Re-apply configured regulatory domain in case the 2.4 GHz AP advertised
 	# a conflicting 802.11d Country IE that could block 5 GHz Channel 36.
@@ -337,8 +337,8 @@ probe_garage_at_boot() {
 	) </dev/null >/dev/null 2>&1 &
 	WATCHDOG_PID=$!
 
-	ip link set lo up 2>/dev/null || true
 	rfkill unblock wifi 2>/dev/null || true
+	rfkill unblock bluetooth 2>/dev/null || true
 	if [ -n "${AAWG_COUNTRY_CODE:-}" ]; then
 		iw reg set "${AAWG_COUNTRY_CODE}" 2>/dev/null || true
 	fi
@@ -359,7 +359,11 @@ probe_garage_at_boot() {
 		return 0
 	fi
 
-	GARAGE_FREQ=$(iw dev wlan0 link 2>/dev/null | awk '/freq:/ {print $2; exit}')
+	# iw 5.19+ prints "freq: 2412.0"; strip any fractional suffix and fallback to WPA_LOG
+	GARAGE_FREQ=$(iw dev wlan0 link 2>/dev/null | awk '/freq:/ {sub(/\..*/, "", $2); print $2; exit}')
+	if [ -z "$GARAGE_FREQ" ] && [ -f "$WPA_LOG" ]; then
+		GARAGE_FREQ=$(sed -n 's/.*freq=\([0-9][0-9]*\).*/\1/p' "$WPA_LOG" 2>/dev/null | tail -n 1)
+	fi
 	case "$GARAGE_FREQ" in
 		''|*[!0-9]*) GARAGE_FREQ="" ;;
 	esac
@@ -465,11 +469,11 @@ fire_garage_at_runtime() {
 	fi
 	rm -rf /var/run/hostapd /var/run/dnsmasq.pid 2>/dev/null || true
 
-	ip route flush dev wlan0 2>/dev/null || true
-	ip addr flush dev wlan0 2>/dev/null || true
-	ip neigh flush dev wlan0 2>/dev/null || true
-	ip link set wlan0 down 2>/dev/null || true
-	iw dev wlan0 set type managed 2>/dev/null || true
+	ip route flush dev wlan0 >/dev/null 2>&1 || true
+	ip addr flush dev wlan0 >/dev/null 2>&1 || true
+	ip neigh flush dev wlan0 >/dev/null 2>&1 || true
+	ip link set wlan0 down >/dev/null 2>&1 || true
+	iw dev wlan0 set type managed >/dev/null 2>&1 || true
 	rfkill unblock wifi 2>/dev/null || true
 	if [ -n "${AAWG_COUNTRY_CODE:-}" ]; then
 		iw reg set "${AAWG_COUNTRY_CODE}" 2>/dev/null || true
