@@ -1,4 +1,3 @@
-#include <atomic>
 #include <dirent.h>
 #include <fstream>
 #include <string.h>
@@ -88,24 +87,14 @@ void UsbManager::disableGadget() {
 }
 
 bool UsbManager::enableDefaultAndWaitForAccessory(std::chrono::milliseconds timeout) {
-    if (!s_udcName.empty()) {
-        std::ifstream stateFile("/sys/class/udc/" + s_udcName + "/state");
-        std::string state;
-        if (stateFile.is_open() && std::getline(stateFile, state) && state != "not attached") {
-            disableGadget();
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-        }
-    }
-
     std::shared_ptr<std::promise<void>> accessoryPromise = std::make_shared<std::promise<void>>();
     std::weak_ptr<std::promise<void>> accessoryPromiseWeak = accessoryPromise;
-    std::shared_ptr<std::atomic<bool>> waitActive = std::make_shared<std::atomic<bool>>(true);
 
-    UeventMonitor::instance().addHandler([accessoryPromiseWeak, waitActive](UeventEnv env) {
+    UeventMonitor::instance().addHandler([accessoryPromiseWeak](UeventEnv env) {
         std::shared_ptr<std::promise<void>> accessoryPromise = accessoryPromiseWeak.lock();
 
-        // If the promise is no longer active or timed out, remove handler.
-        if (!accessoryPromise || !waitActive->load()) {
+        // If the promise is no longer active, nothing to do.
+        if (!accessoryPromise) {
             return true;
         }
 
@@ -117,52 +106,54 @@ bool UsbManager::enableDefaultAndWaitForAccessory(std::chrono::milliseconds time
             return false;
         }
 
-        bool expected = true;
-        if (waitActive->compare_exchange_strong(expected, false)) {
-            Logger::instance()->info("USB Manager: Received accessory start request\n");
-            accessoryPromise->set_value();
-        }
+        // Got an accessory start event
+        Logger::instance()->info("USB Manager: Received accessory start request\n");
+        UsbManager::instance().switchToAccessoryGadget();
+        accessoryPromise->set_value();
 
         return true;
     });
+
+    if (!s_udcName.empty()) {
+        std::ifstream stateFile("/sys/class/udc/" + s_udcName + "/state");
+        std::string state;
+        if (stateFile.is_open() && std::getline(stateFile, state) && state != "not attached") {
+            disableGadget();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
 
     enableGadget(defaultGadgetName);
 
     Logger::instance()->info("USB Manager: Enabled default gadget\n");
 
-    std::future<void> accessoryFuture = accessoryPromise->get_future();
     bool switched = false;
     if (timeout == std::chrono::milliseconds(0)) {
-        accessoryFuture.wait();
+        accessoryPromise->get_future().wait();
         switched = true;
     } else {
-        std::future_status status = accessoryFuture.wait_for(timeout);
+        std::future_status status = accessoryPromise->get_future().wait_for(timeout);
 
         if (status == std::future_status::ready) {
             switched = true;
         } else {
-            waitActive->store(false);
             Logger::instance()->info("USB Manager: Timeout waiting for accessory start request\n");
-            disableGadget();
             return false;
         }
     }
 
-    // Perform the 100ms default->accessory configfs transition and wait up to 3s
-    // for SET_CONFIGURATION ("configured") on the caller thread so UeventMonitor's
-    // netlink thread never blocks or races with disableGadget().
-    if (switched) {
-        switchToAccessoryGadget();
-        if (!s_udcName.empty()) {
-            const std::string statePath = "/sys/class/udc/" + s_udcName + "/state";
-            for (int i = 0; i < 150; ++i) {
-                std::ifstream stateFile(statePath);
-                std::string state;
-                if (stateFile.is_open() && std::getline(stateFile, state) && state == "configured") {
-                    break;
-                }
-                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    // Wait up to 3s on the caller thread (outside UeventMonitor's mutex) for the
+    // USB host (head unit) to complete SET_CONFIGURATION so f_accessory has
+    // dev->online == 1 before write(/dev/usb_accessory) runs.
+    if (switched && !s_udcName.empty()) {
+        const std::string statePath = "/sys/class/udc/" + s_udcName + "/state";
+        for (int i = 0; i < 150; ++i) {
+            std::ifstream stateFile(statePath);
+            std::string state;
+            if (stateFile.is_open() && std::getline(stateFile, state) && state == "configured") {
+                break;
             }
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
         }
     }
 
