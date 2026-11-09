@@ -327,6 +327,7 @@ probe_garage_at_boot() {
 	# downloading its BCM4345C0 .hcd firmware patch over UART ( transitions from
 	# "build 0000" to "build 0382" around ~2.8s ) and complete hci_dev_do_open()
 	# before wlan0 starts active 2.4 GHz scanning on the shared radio/antenna.
+	rfkill unblock bluetooth 2>/dev/null || true
 	BT_WAIT=0
 	while [ "$BT_WAIT" -lt 25 ]; do
 		if [ -d /sys/class/bluetooth/hci0 ] && dmesg 2>/dev/null | grep -q "BCM4345C0.*build [1-9]"; then
@@ -336,6 +337,7 @@ probe_garage_at_boot() {
 		BT_WAIT=$((BT_WAIT + 1))
 	done
 	rfkill unblock bluetooth 2>/dev/null || true
+	hciconfig hci0 up 2>/dev/null || true
 	sleep 0.3
 
 	GARAGE_TOUCHED_WLAN0=1
