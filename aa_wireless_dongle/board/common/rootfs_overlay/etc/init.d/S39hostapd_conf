@@ -22,8 +22,9 @@ case "$1" in
 			WAIT_COUNT=$((WAIT_COUNT + 1))
 		done
 
-		# Ensure Wi-Fi radio is not soft-blocked by rfkill and set regulatory domain
+		# Ensure Wi-Fi and Bluetooth radios are not soft-blocked by rfkill before S40
 		rfkill unblock wifi 2>/dev/null || true
+		rfkill unblock bluetooth 2>/dev/null || true
 		if [ -n "${AAWG_COUNTRY_CODE}" ]; then
 			/usr/sbin/iw reg set "${AAWG_COUNTRY_CODE}" 2>/dev/null || true
 		fi
