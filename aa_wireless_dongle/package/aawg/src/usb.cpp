@@ -1,3 +1,4 @@
+#include <atomic>
 #include <dirent.h>
 #include <fstream>
 #include <string.h>
@@ -89,12 +90,13 @@ void UsbManager::disableGadget() {
 bool UsbManager::enableDefaultAndWaitForAccessory(std::chrono::milliseconds timeout) {
     std::shared_ptr<std::promise<void>> accessoryPromise = std::make_shared<std::promise<void>>();
     std::weak_ptr<std::promise<void>> accessoryPromiseWeak = accessoryPromise;
+    std::shared_ptr<std::atomic<bool>> waitActive = std::make_shared<std::atomic<bool>>(true);
 
-    UeventMonitor::instance().addHandler([accessoryPromiseWeak](UeventEnv env) {
+    UeventMonitor::instance().addHandler([accessoryPromiseWeak, waitActive](UeventEnv env) {
         std::shared_ptr<std::promise<void>> accessoryPromise = accessoryPromiseWeak.lock();
 
-        // If the promise is no longer active, nothing to do.
-        if (!accessoryPromise) {
+        // If the promise is no longer active or wait timed out, unregister handler.
+        if (!accessoryPromise || !waitActive->load()) {
             return true;
         }
 
@@ -106,9 +108,13 @@ bool UsbManager::enableDefaultAndWaitForAccessory(std::chrono::milliseconds time
             return false;
         }
 
-        // Got an accessory start event
+        if (!waitActive->exchange(false)) {
+            return true;
+        }
+
+        // Got an accessory start event; wake caller thread to perform the gadget switch
+        // outside UeventMonitor's handler mutex.
         Logger::instance()->info("USB Manager: Received accessory start request\n");
-        UsbManager::instance().switchToAccessoryGadget();
         accessoryPromise->set_value();
 
         return true;
@@ -137,9 +143,14 @@ bool UsbManager::enableDefaultAndWaitForAccessory(std::chrono::milliseconds time
         if (status == std::future_status::ready) {
             switched = true;
         } else {
+            waitActive->store(false);
             Logger::instance()->info("USB Manager: Timeout waiting for accessory start request\n");
             return false;
         }
+    }
+
+    if (switched) {
+        switchToAccessoryGadget();
     }
 
     // Wait up to 3s on the caller thread (outside UeventMonitor's mutex) for the

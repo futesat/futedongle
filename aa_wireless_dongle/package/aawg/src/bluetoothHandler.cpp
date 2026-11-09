@@ -361,11 +361,11 @@ void BluetoothHandler::powerOn() {
     }
 
     setPower(true);
-    setPairable(true);
-
     if (!wasPowered) {
         std::this_thread::sleep_for(std::chrono::milliseconds(250));
     }
+    setPairable(true);
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
     if (Config::instance()->getConnectionStrategy() == ConnectionStrategy::DONGLE_MODE) {
         startAdvertising();

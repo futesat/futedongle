@@ -146,11 +146,13 @@ restore_ap() {
 			H_WAIT=$((H_WAIT + 1))
 		done
 		rm -rf /var/run/hostapd 2>/dev/null || true
-		ifconfig wlan0 10.0.0.1 netmask 255.255.255.0 up 2>/dev/null || true
+		ip link set wlan0 down >/dev/null 2>&1 || true
 		hostapd -B /var/run/hostapd.conf -t -f /var/log/hostapd >/dev/null 2>&1 || true
+		ifconfig wlan0 10.0.0.1 netmask 255.255.255.0 up 2>/dev/null || true
+		iw dev wlan0 set power_save off 2>/dev/null || true
 
-		# Start dnsmasq immediately while hostapd initializes the 5 GHz radio so
-		# UDP port 67 is already listening before the first AP beacon goes out.
+		# Start dnsmasq immediately once wlan0 is in AP mode with 10.0.0.1/24
+		# so UDP port 67 is ready as soon as the phone associates.
 		if ! pidof dnsmasq >/dev/null 2>&1; then
 			rm -f /var/run/dnsmasq.pid 2>/dev/null || true
 			if [ -x /etc/init.d/S80dnsmasq ]; then
@@ -321,6 +323,21 @@ probe_garage_at_boot() {
 		return 0
 	fi
 
+	# Wait up to 5s for the shared CYW43455 Bluetooth controller (hci0) to finish
+	# downloading its BCM4345C0 .hcd firmware patch over UART ( transitions from
+	# "build 0000" to "build 0382" around ~2.8s ) and complete hci_dev_do_open()
+	# before wlan0 starts active 2.4 GHz scanning on the shared radio/antenna.
+	BT_WAIT=0
+	while [ "$BT_WAIT" -lt 25 ]; do
+		if [ -d /sys/class/bluetooth/hci0 ] && dmesg 2>/dev/null | grep -q "BCM4345C0.*build [1-9]"; then
+			break
+		fi
+		sleep 0.2
+		BT_WAIT=$((BT_WAIT + 1))
+	done
+	rfkill unblock bluetooth 2>/dev/null || true
+	sleep 0.3
+
 	GARAGE_TOUCHED_WLAN0=1
 	trap 'trap "" EXIT INT TERM; cleanup; exit 0' EXIT INT TERM
 
@@ -338,7 +355,6 @@ probe_garage_at_boot() {
 	WATCHDOG_PID=$!
 
 	rfkill unblock wifi 2>/dev/null || true
-	rfkill unblock bluetooth 2>/dev/null || true
 	if [ -n "${AAWG_COUNTRY_CODE:-}" ]; then
 		iw reg set "${AAWG_COUNTRY_CODE}" 2>/dev/null || true
 	fi
