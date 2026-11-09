@@ -22,9 +22,29 @@ case "$1" in
 			WAIT_COUNT=$((WAIT_COUNT + 1))
 		done
 
-		# Ensure Wi-Fi and Bluetooth radios are not soft-blocked by rfkill before S40
+		# Ensure Wi-Fi and Bluetooth radios are not soft-blocked by rfkill before S40.
+		# Bring hci0 UP before S40bluetooth starts bluetoothd: in Linux 6.6.28,
+		# hci_power_on_sync() closes hci0 after HCI_AUTO_OFF_TIMEOUT (2s), and
+		# MGMT_OP_REMOVE_ADV_MONITOR / REMOVE_UUID / ADD_UUID use hci_cmd_sync_queue()
+		# which fails with -ENETDOWN (0x03) unless HCI_RUNNING is set.
 		rfkill unblock wifi 2>/dev/null || true
 		rfkill unblock bluetooth 2>/dev/null || true
+		hciconfig hci0 up 2>/dev/null || true
+
+		# Normalize CTKD-generated LE AddressType in /var/lib/bluetooth/*/*/info so
+		# BlueZ 5.79 load_ltks()/load_irks() pass BDADDR_LE_PUBLIC instead of
+		# BDADDR_BREDR (0) or BDADDR_LE_RANDOM on IEEE public MACs (preventing 0x0d).
+		for info_file in /var/lib/bluetooth/*/*/info; do
+			[ -f "$info_file" ] || continue
+			if grep -qE '^\[(LongTermKey|SlaveLongTermKey|PeripheralLongTermKey|IdentityResolvingKey)\]' "$info_file" 2>/dev/null; then
+				if grep -q '^AddressType=static' "$info_file" 2>/dev/null; then
+					sed -i 's/^AddressType=static/AddressType=public/' "$info_file" 2>/dev/null || true
+				elif ! grep -q '^AddressType=' "$info_file" 2>/dev/null; then
+					sed -i '/^\[General\]/a AddressType=public' "$info_file" 2>/dev/null || true
+				fi
+			fi
+		done
+
 		if [ -n "${AAWG_COUNTRY_CODE}" ]; then
 			/usr/sbin/iw reg set "${AAWG_COUNTRY_CODE}" 2>/dev/null || true
 		fi

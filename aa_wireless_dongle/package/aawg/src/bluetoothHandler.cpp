@@ -93,6 +93,10 @@ void BluetoothHandler::initAdapter() {
     }
     else {
         m_adapter = BluezAdapterProxy::create(m_connection, adapter_path);
+        // Ensure hci0 is powered (HCI_RUNNING=1) before setting alias or
+        // registering profiles, since Linux 6.6.28 MGMT_OP_ADD_UUID uses
+        // hci_cmd_sync_queue() and returns -ENETDOWN (0x03) if hci0 is down.
+        setPower(true);
         try {
             m_adapter->alias->set_value(m_adapterAlias);
             Logger::instance()->info("Bluetooth adapter alias: %s\n", m_adapterAlias.c_str());
@@ -307,10 +311,11 @@ void BluetoothHandler::retryConnectLoop(std::future<void> connectWithRetryFuture
 
         // When Bluetooth connects, give the phone a full 5s window to open the
         // RFCOMM AAWirelessProfile socket before considering the link stalled.
-        // Only use fast 2s retries when Bluetooth connection itself failed.
+        // After a 5.12s outbound page timeout, pause 3s on initial retries so the
+        // phone can finish its car head-unit HFP/PBAP handshake or connect inbound.
         int32_t retryIntervalSec = 5;
         if (!connected) {
-            retryIntervalSec = (failedAttempts < 3) ? 2 : 5;
+            retryIntervalSec = (failedAttempts < 3) ? 3 : 5;
             ++failedAttempts;
         } else {
             failedAttempts = 0;
