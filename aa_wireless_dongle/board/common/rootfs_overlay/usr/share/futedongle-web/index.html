@@ -529,7 +529,23 @@
             <div class="value" id="gte-warmup">-</div>
           </div>
           <div class="metric">
-            <div class="label">Stored Fault Codes (Mode 03)</div>
+            <div class="label">DQ400e Gear / Combined Output</div>
+            <div class="value" id="gte-gear-cv">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">GDI Fuel Rail / Spark Advance</div>
+            <div class="value" id="gte-gdi">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Fuel Trims (STFT / LTFT) &amp; Cat Temp</div>
+            <div class="value" id="gte-trims-cat">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">E-Machine (HEM80) RPM / Inverter</div>
+            <div class="value" id="gte-emotor">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Stored Fault Codes / Chassis VIN</div>
             <div class="value" id="gte-dtccodes">-</div>
           </div>
         </div>
@@ -911,9 +927,23 @@
           const warmClass = warm.indexOf('OPTIMAL') >= 0 ? 'ok' : 'warn';
           document.getElementById('gte-warmup').innerHTML =
             '<span class="badge ' + warmClass + '">' + warm + '</span>';
+          document.getElementById('gte-gear-cv').textContent =
+            (g.dsg_gear || 'P/N') + ' • ' + (g.system_total_cv ?? 0) + ' CV (' + (g.system_total_kw ?? 0) + ' kW)';
+          const railStr = (g.fuel_rail_bar !== null && g.fuel_rail_bar !== undefined) ? (g.fuel_rail_bar + ' bar') : '0 bar (EV)';
+          const ignStr = (g.timing_advance_deg !== null && g.timing_advance_deg !== undefined) ? (g.timing_advance_deg + '°') : '-';
+          document.getElementById('gte-gdi').textContent = railStr + ' • Ign ' + ignStr;
+          const stftStr = (g.stft_pct !== null && g.stft_pct !== undefined) ? ((g.stft_pct >= 0 ? '+' : '') + g.stft_pct + '%') : '-';
+          const ltftStr = (g.ltft_pct !== null && g.ltft_pct !== undefined) ? ((g.ltft_pct >= 0 ? '+' : '') + g.ltft_pct + '%') : '-';
+          const catStr = (g.cat_temp_c !== null && g.cat_temp_c !== undefined) ? (g.cat_temp_c + '°C') : '-';
+          document.getElementById('gte-trims-cat').textContent =
+            stftStr + ' / ' + ltftStr + ' • Cat ' + catStr;
+          const invStr = (g.inverter_temp_c !== null && g.inverter_temp_c !== undefined) ? (g.inverter_temp_c + '°C') : 'OK';
+          document.getElementById('gte-emotor').textContent =
+            (g.emotor_rpm ?? 0) + ' RPM • Inv ' + invStr;
+          const vinTag = g.vin ? (' • ' + g.vin) : '';
           document.getElementById('gte-dtccodes').innerHTML = (g.dtc_codes && g.dtc_codes !== 'NONE')
-            ? '<span class="badge err">' + g.dtc_codes + '</span>'
-            : '<span class="badge ok">NONE (Clean)</span>';
+            ? '<span class="badge err">' + g.dtc_codes + '</span>' + vinTag
+            : '<span class="badge ok">NONE (Clean)</span>' + vinTag;
 
           document.getElementById('gte-trip').textContent =
             (g.trip_distance_km ?? 0) + ' km • Avg ' + (g.trip_avg_speed_kmh ?? 0) + ' km/h • ' + (g.trip_ev_ratio_pct ?? 100) + '% EV';
@@ -926,39 +956,10 @@
             (g.trip_peak_discharge_kw ?? 0) + ' kW / +' + (g.trip_peak_regen_kw ?? 0) + ' kW';
           const obdV = (g.aux_12v_v !== null && g.aux_12v_v !== undefined) ? (g.aux_12v_v + ' V') : '-';
           const ecuV = (g.ecu_12v_v !== null && g.ecu_12v_v !== undefined) ? (g.ecu_12v_v + ' V') : '-';
-          document.getElementById('gte-12v').textContent = obdV + ' / ' + ecuV;
+          const soc12 = (g.aux_12v_soc_pct !== null && g.aux_12v_soc_pct !== undefined) ? (' (' + g.aux_12v_soc_pct + '%)') : '';
+          document.getElementById('gte-12v').textContent = obdV + ' / ' + ecuV + soc12;
           document.getElementById('gte-env').textContent =
             (g.ambient_c ?? '-') + '°C • Tank ' + (g.fuel_level_pct ?? '-') + '%';
-          if (g.last_trip && g.last_trip.distance_km !== undefined) {
-            const lt = g.last_trip;
-            document.getElementById('gte-lasttrip').textContent =
-              lt.distance_km + ' km (' + (lt.ev_km ?? 0) + ' EV / ' + (lt.ice_km ?? 0) + ' ICE) • ' + (lt.ev_ratio_pct ?? 100) + '% EV';
-          } else {
-            document.getElementById('gte-lasttrip').textContent = 'No saved trip yet';
-          }
-
-          document.getElementById('gte-split-trip').textContent =
-            'EV ' + (g.trip_ev_km ?? 0) + ' km • Hybrid ' + (g.trip_ice_km ?? 0) + ' km';
-          document.getElementById('gte-split-life').textContent =
-            'EV ' + (g.lifetime_ev_km ?? 0) + ' km • Hybrid ' + (g.lifetime_ice_km ?? 0) + ' km (Tot ' + (g.lifetime_total_km ?? 0) + ' km)';
-          const evR = (g.ev_range_est_km !== null && g.ev_range_est_km !== undefined) ? (g.ev_range_est_km + ' km EV') : '- EV';
-          const fuR = (g.fuel_range_est_km !== null && g.fuel_range_est_km !== undefined) ? (g.fuel_range_est_km + ' km Gas (' + (g.fuel_liters_rem ?? '-') + 'L)') : '- Gas';
-          const totR = (g.total_range_est_km !== null && g.total_range_est_km !== undefined) ? (' = ~' + g.total_range_est_km + ' km') : '';
-          document.getElementById('gte-total-range').textContent = evR + ' + ' + fuR + totR;
-          document.getElementById('gte-dtc-km').textContent =
-            'Clean ' + (g.km_since_dtc_clear ?? '-') + ' km • MIL ' + (g.km_with_mil_on ?? 0) + ' km';
-
-          const lat = g.gps_lat ?? (d.car_gps ? d.car_gps.lat : null);
-          const lon = g.gps_lon ?? (d.car_gps ? d.car_gps.lon : null);
-          const mapBtn = document.getElementById('gte-map-link');
-          if (lat !== null && lat !== undefined && lon !== null && lon !== undefined) {
-            document.getElementById('gte-gps').textContent = Number(lat).toFixed(5) + ', ' + Number(lon).toFixed(5);
-            mapBtn.href = 'https://maps.google.com/?q=' + encodeURIComponent(lat + ',' + lon);
-            mapBtn.style.display = 'inline-flex';
-          } else {
-            document.getElementById('gte-gps').textContent = 'Tap Pin Phone GPS';
-            mapBtn.style.display = 'none';
-          }
           if (g.last_trip && g.last_trip.distance_km !== undefined) {
             const lt = g.last_trip;
             document.getElementById('gte-lasttrip').textContent =

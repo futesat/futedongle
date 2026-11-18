@@ -194,6 +194,19 @@ struct TelemetryState {
     std::optional<double> odometerKm;
     std::optional<int> kmSinceDtcClear;
     std::optional<int> kmWithMilOn;
+    std::optional<int> emotorRpm;
+    std::optional<int> inverterTempC;
+    std::optional<int> catTempC;
+    std::optional<int> iceRuntimeSec;
+    std::optional<int> aux12vSocPct;
+    std::optional<int> systemTotalCv;
+    std::optional<double> systemTotalKw;
+    std::optional<double> fuelRailBar;
+    std::optional<double> timingAdvanceDeg;
+    std::optional<double> stftPct;
+    std::optional<double> ltftPct;
+    std::string dsgGear{"P/N"};
+    std::string vin;
     std::optional<double> gpsLat;
     std::optional<double> gpsLon;
     int dtcCount{0};
@@ -298,6 +311,8 @@ void writeTelemetrySnapshot(const TelemetryState& st) {
     out << "  \"mil_on\": " << (st.milOn ? "true" : "false") << ",\n";
     out << "  \"dtc_codes\": \"" << jsonEscape(st.dtcCodes) << "\",\n";
     out << "  \"ice_warmup_status\": \"" << jsonEscape(st.iceWarmupStatus) << "\",\n";
+    out << "  \"dsg_gear\": \"" << jsonEscape(st.dsgGear) << "\",\n";
+    out << "  \"vin\": \"" << jsonEscape(st.vin) << "\",\n";
     out << "  \"trip_distance_km\": " << std::setprecision(2) << st.tripDistanceKm << ",\n";
     out << "  \"trip_ev_km\": " << std::setprecision(2) << st.tripEvKm << ",\n";
     out << "  \"trip_ice_km\": " << std::setprecision(2) << st.tripIceKm << ",\n";
@@ -346,6 +361,17 @@ void writeTelemetrySnapshot(const TelemetryState& st) {
     writeOptInt("total_range_est_km", st.totalRangeEstKm);
     writeOptInt("km_since_dtc_clear", st.kmSinceDtcClear);
     writeOptInt("km_with_mil_on", st.kmWithMilOn);
+    writeOptInt("emotor_rpm", st.emotorRpm);
+    writeOptInt("inverter_temp_c", st.inverterTempC);
+    writeOptInt("cat_temp_c", st.catTempC);
+    writeOptInt("ice_runtime_sec", st.iceRuntimeSec);
+    writeOptInt("aux_12v_soc_pct", st.aux12vSocPct);
+    writeOptInt("system_total_cv", st.systemTotalCv);
+    writeOptDouble("system_total_kw", st.systemTotalKw, 1);
+    writeOptDouble("fuel_rail_bar", st.fuelRailBar, 1);
+    writeOptDouble("timing_advance_deg", st.timingAdvanceDeg, 1);
+    writeOptDouble("stft_pct", st.stftPct, 1);
+    writeOptDouble("ltft_pct", st.ltftPct, 1);
     writeOptDouble("ice_load_pct", st.iceLoadPct, 1);
     writeOptDouble("throttle_pct", st.throttlePct, 1);
     writeOptDouble("turbo_boost_bar", st.turboBoostBar, 2);
@@ -905,6 +931,42 @@ std::string decodeMode03Dtcs(const std::string& raw) {
     return ss.str();
 }
 
+// Decode Mode 09 PID 02 response ("49 02 ...") into 17-character ASCII VIN (e.g. WVWZZZ3CZ...)
+std::string decodeMode09Vin(const std::string& raw) {
+    auto hex = extractHexPayload(raw, "4902");
+    if (!hex.has_value()) {
+        return "";
+    }
+    std::string vin;
+    for (size_t i = 0; i * 2 + 2 <= hex->size(); ++i) {
+        auto b = parseHexByte(*hex, i);
+        if (!b) continue;
+        char c = static_cast<char>(*b);
+        if (isalnum(static_cast<unsigned char>(c)) && c != 'I' && c != 'O' && c != 'Q') {
+            vin.push_back(static_cast<char>(toupper(static_cast<unsigned char>(c))));
+        }
+    }
+    if (vin.size() >= 17) {
+        return vin.substr(vin.size() - 17);
+    }
+    return "";
+}
+
+// Estimate active DQ400e 6-speed DSG gear (D1..D6) from vehicle speed and shaft RPM
+std::string estimateDq400eGear(int speedKmh, int rpm) {
+    if (speedKmh <= 1) {
+        return (rpm > 0) ? "P/N (IDLE)" : "READY (STILL)";
+    }
+    int refRpm = (rpm > 400) ? rpm : (speedKmh * 42);
+    double kmhPer1000Rpm = (static_cast<double>(speedKmh) * 1000.0) / std::max(500, refRpm);
+    if (kmhPer1000Rpm < 11.5) return "D1";
+    if (kmhPer1000Rpm < 18.5) return "D2";
+    if (kmhPer1000Rpm < 26.5) return "D3";
+    if (kmhPer1000Rpm < 35.0) return "D4";
+    if (kmhPer1000Rpm < 43.5) return "D5";
+    return "D6";
+}
+
 } // namespace
 
 int main() {
@@ -1251,6 +1313,29 @@ int main() {
                     }
                 }
 
+                // Compute DQ400e gear, E-machine RPM (HEM80), and combined GTE system output (up to 160 kW / 218 CV)
+                state.dsgGear = estimateDq400eGear(state.speedKmh, state.iceRpm);
+                if (state.iceRpm > 0) {
+                    state.emotorRpm = state.iceRpm;
+                } else {
+                    state.emotorRpm = (state.speedKmh > 0) ? (state.speedKmh * 48) : 0;
+                }
+                {
+                    double evKw = 0.0;
+                    if (state.hvPowerKw.has_value() && *state.hvPowerKw < 0.0) {
+                        evKw = std::min(85.0, (-*state.hvPowerKw) * 0.93);
+                    }
+                    double iceKw = 0.0;
+                    if (state.iceRpm > 500) {
+                        double loadFrac = state.iceLoadPct.value_or(20.0) / 100.0;
+                        double rpmFrac = std::min(1.0, state.iceRpm / 5500.0);
+                        iceKw = std::min(115.0, 115.0 * loadFrac * rpmFrac);
+                    }
+                    double combKw = std::min(160.0, evKw + iceKw);
+                    state.systemTotalKw = combKw;
+                    state.systemTotalCv = static_cast<int>(std::round(combKw * 1.35962));
+                }
+
                 // Integrate trip & lifetime distance (split by Electric E-Mode vs Hybrid ICE) and energy
                 if (dtHours > 0.0 && dtHours < 0.02) {
                     double dKm = state.speedKmh * dtHours;
@@ -1352,6 +1437,46 @@ int main() {
                             state.ecu12vV = *w / 1000.0;
                         }
                     }
+                    // Poll 1.4 TSI GDI High-Pressure Fuel Rail (0123), Catalyst Temp (013C),
+                    // Spark Timing Advance (010E), Fuel Trims STFT/LTFT (0106/0107), and ICE Runtime (011F)
+                    if (state.iceRpm > 0) {
+                        if (auto frpHex = extractHexPayload(elm.sendCommand("0123", 600), "4123")) {
+                            if (auto w = parseHexWordU16(*frpHex, 0)) {
+                                // PID 0123 is 10 kPa per bit = 0.1 bar per bit
+                                state.fuelRailBar = *w * 0.1;
+                            }
+                        }
+                        if (auto ignHex = extractHexPayload(elm.sendCommand("010E", 600), "410E")) {
+                            if (auto b = parseHexByte(*ignHex, 0)) {
+                                state.timingAdvanceDeg = (*b / 2.0) - 64.0;
+                            }
+                        }
+                        if (auto stftHex = extractHexPayload(elm.sendCommand("0106", 600), "4106")) {
+                            if (auto b = parseHexByte(*stftHex, 0)) {
+                                state.stftPct = ((*b - 128) * 100.0) / 128.0;
+                            }
+                        }
+                        if (auto ltftHex = extractHexPayload(elm.sendCommand("0107", 600), "4107")) {
+                            if (auto b = parseHexByte(*ltftHex, 0)) {
+                                state.ltftPct = ((*b - 128) * 100.0) / 128.0;
+                            }
+                        }
+                    }
+                    if ((cycleCount % 6) == 0) {
+                        if (auto catHex = extractHexPayload(elm.sendCommand("013C", 600), "413C")) {
+                            if (auto w = parseHexWordU16(*catHex, 0)) {
+                                int tc = static_cast<int>(std::round((*w / 10.0) - 40.0));
+                                if (tc >= -20 && tc <= 1100) {
+                                    state.catTempC = tc;
+                                }
+                            }
+                        }
+                        if (auto runHex = extractHexPayload(elm.sendCommand("011F", 600), "411F")) {
+                            if (auto w = parseHexWordU16(*runHex, 0)) {
+                                state.iceRuntimeSec = *w;
+                            }
+                        }
+                    }
                     if (!baroKpa.has_value()) {
                         if (auto baroHex = extractHexPayload(elm.sendCommand("0133", 600), "4133")) {
                             baroKpa = parseHexByte(*baroHex, 0);
@@ -1392,6 +1517,36 @@ int main() {
                         if (auto milKmHex = extractHexPayload(elm.sendCommand("0121", 600), "4121")) {
                             if (auto w = parseHexWordU16(*milKmHex, 0)) {
                                 state.kmWithMilOn = *w;
+                            }
+                        }
+                        if (state.vin.empty()) {
+                            state.vin = decodeMode09Vin(elm.sendCommand("0902", 900));
+                        }
+                        // Query MQB Gateway 19 (J533: TX 710, RX 77A) for 12V AGM Battery SoC (222B01)
+                        elm.sendCommand("ATSH710", 500);
+                        elm.sendCommand("ATCRA77A", 500);
+                        if (auto bdmHex = extractHexPayload(elm.sendCommand("222B01", 700), "622B01")) {
+                            if (auto b = parseHexByte(*bdmHex, 0)) {
+                                if (*b > 0 && *b <= 100) {
+                                    state.aux12vSocPct = *b;
+                                }
+                            }
+                        }
+                        if (!state.aux12vSocPct.has_value() && state.aux12vV.has_value()) {
+                            // Estimate 12V AGM state of charge from resting/regulated voltage
+                            double vRef = baselineResting12v.value_or(*state.aux12vV);
+                            int estSoc = static_cast<int>(std::round(std::clamp((vRef - 11.8) / (12.85 - 11.8), 0.15, 1.0) * 100.0));
+                            state.aux12vSocPct = estSoc;
+                        }
+                        // Query GTE Electric Drive / Power Electronics 51 (J841: TX 7E4, RX 7EC) for Inverter Temp
+                        elm.sendCommand("ATSH7E4", 500);
+                        elm.sendCommand("ATCRA7EC", 500);
+                        if (auto invHex = extractHexPayload(elm.sendCommand("221E12", 700), "621E12")) {
+                            if (auto b = parseHexByte(*invHex, 0)) {
+                                int tc = *b - 40;
+                                if (tc >= -30 && tc <= 150) {
+                                    state.inverterTempC = tc;
+                                }
                             }
                         }
                         // Fallback odometer read from VW MQB Instrument Cluster 17 (TX 714, RX 77E, DID 2203)
