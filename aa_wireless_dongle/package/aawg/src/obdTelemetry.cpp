@@ -44,6 +44,8 @@ static constexpr const char* INTERFACE_GATT_CHRC = "org.bluez.GattCharacteristic
 
 static constexpr const char* TELEMETRY_JSON_PATH = "/run/gte_telemetry.json";
 static constexpr const char* TELEMETRY_JSON_TMP = "/run/gte_telemetry.json.tmp";
+static constexpr const char* LAST_TRIP_JSON_PATH = "/persist/last_gte_trip.json";
+static constexpr const char* LAST_TRIP_JSON_TMP = "/persist/last_gte_trip.json.tmp";
 static constexpr const char* PERSIST_OBD_MAC_PATH = "/persist/obd_ble_mac";
 static constexpr const char* RUN_OBD_MAC_PATH = "/var/run/obd_ble_mac";
 static constexpr const char* GARAGE_IN_RANGE_FLAG = "/var/run/garage_in_range";
@@ -176,18 +178,68 @@ struct TelemetryState {
     std::optional<double> hvTempMinC;
     std::optional<double> hvTempMaxC;
     std::optional<double> hvTempSpreadC;
+    std::optional<double> hvCellMinV;
+    std::optional<double> hvCellMaxV;
+    std::optional<int> hvCellDeltaMv;
+    std::optional<double> hvSohPct;
+    std::optional<double> hvEnergyRemKwh;
+    std::optional<int> evRangeEstKm;
     std::optional<double> aux12vV;
     std::optional<double> ecu12vV;
     std::optional<double> odometerKm;
     int dtcCount{0};
     bool milOn{false};
+    std::string dtcCodes{"NONE"};
+    std::string iceWarmupStatus{"COLD"};
     double tripDistanceKm{0.0};
     double tripEvRatioPct{100.0};
     double tripEvKwhUsed{0.0};
     double tripRegenKwh{0.0};
+    std::optional<double> tripEvKwh100km;
+    double tripPeakDischargeKw{0.0};
+    double tripPeakRegenKw{0.0};
     int tripMaxSpeedKmh{0};
+    int tripAvgSpeedKmh{0};
     int tripDurationSec{0};
+    std::string lastTripJson{"null"};
 };
+
+void saveLastTripSummary(const TelemetryState& st) {
+    if (st.tripDistanceKm < 0.05 && st.tripDurationSec < 30) {
+        return;
+    }
+    std::ostringstream out;
+    out << std::fixed;
+    out << "{"
+        << "\"ended_utc\":\"" << currentUtcIso8601() << "\","
+        << "\"distance_km\":" << std::setprecision(2) << st.tripDistanceKm << ","
+        << "\"duration_sec\":" << st.tripDurationSec << ","
+        << "\"ev_ratio_pct\":" << std::setprecision(1) << st.tripEvRatioPct << ","
+        << "\"ev_kwh_used\":" << std::setprecision(2) << st.tripEvKwhUsed << ","
+        << "\"regen_kwh\":" << std::setprecision(2) << st.tripRegenKwh << ","
+        << "\"ev_kwh_100km\":";
+    if (st.tripEvKwh100km.has_value()) {
+        out << std::setprecision(1) << *st.tripEvKwh100km;
+    } else {
+        out << "null";
+    }
+    out << ",\"max_speed_kmh\":" << st.tripMaxSpeedKmh << ","
+        << "\"avg_speed_kmh\":" << st.tripAvgSpeedKmh << ","
+        << "\"end_soc_pct\":";
+    if (st.hvSocDisplayPct.has_value()) {
+        out << std::setprecision(1) << *st.hvSocDisplayPct;
+    } else {
+        out << "null";
+    }
+    out << "}";
+
+    std::ofstream f(LAST_TRIP_JSON_TMP, std::ios::out | std::ios::trunc);
+    if (f.is_open()) {
+        f << out.str() << "\n";
+        f.close();
+        rename(LAST_TRIP_JSON_TMP, LAST_TRIP_JSON_PATH);
+    }
+}
 
 void writeTelemetrySnapshot(const TelemetryState& st) {
     std::ostringstream out;
@@ -204,11 +256,16 @@ void writeTelemetrySnapshot(const TelemetryState& st) {
     out << "  \"ice_rpm\": " << st.iceRpm << ",\n";
     out << "  \"dtc_count\": " << st.dtcCount << ",\n";
     out << "  \"mil_on\": " << (st.milOn ? "true" : "false") << ",\n";
+    out << "  \"dtc_codes\": \"" << jsonEscape(st.dtcCodes) << "\",\n";
+    out << "  \"ice_warmup_status\": \"" << jsonEscape(st.iceWarmupStatus) << "\",\n";
     out << "  \"trip_distance_km\": " << std::setprecision(2) << st.tripDistanceKm << ",\n";
     out << "  \"trip_ev_ratio_pct\": " << std::setprecision(1) << st.tripEvRatioPct << ",\n";
     out << "  \"trip_ev_kwh_used\": " << std::setprecision(2) << st.tripEvKwhUsed << ",\n";
     out << "  \"trip_regen_kwh\": " << std::setprecision(2) << st.tripRegenKwh << ",\n";
+    out << "  \"trip_peak_discharge_kw\": " << std::setprecision(1) << st.tripPeakDischargeKw << ",\n";
+    out << "  \"trip_peak_regen_kw\": " << std::setprecision(1) << st.tripPeakRegenKw << ",\n";
     out << "  \"trip_max_speed_kmh\": " << st.tripMaxSpeedKmh << ",\n";
+    out << "  \"trip_avg_speed_kmh\": " << st.tripAvgSpeedKmh << ",\n";
     out << "  \"trip_duration_sec\": " << st.tripDurationSec << ",\n";
 
     auto writeOptInt = [&](const char* key, const std::optional<int>& val) {
@@ -236,6 +293,8 @@ void writeTelemetrySnapshot(const TelemetryState& st) {
     writeOptInt("intake_air_c", st.intakeAirC);
     writeOptInt("ambient_c", st.ambientC);
     writeOptInt("dsg_temp_c", st.dsgTempC);
+    writeOptInt("hv_cell_delta_mv", st.hvCellDeltaMv);
+    writeOptInt("ev_range_est_km", st.evRangeEstKm);
     writeOptDouble("ice_load_pct", st.iceLoadPct, 1);
     writeOptDouble("throttle_pct", st.throttlePct, 1);
     writeOptDouble("turbo_boost_bar", st.turboBoostBar, 2);
@@ -250,9 +309,15 @@ void writeTelemetrySnapshot(const TelemetryState& st) {
     writeOptDouble("hv_temp_min_c", st.hvTempMinC, 1);
     writeOptDouble("hv_temp_max_c", st.hvTempMaxC, 1);
     writeOptDouble("hv_temp_spread_c", st.hvTempSpreadC, 1);
+    writeOptDouble("hv_cell_min_v", st.hvCellMinV, 3);
+    writeOptDouble("hv_cell_max_v", st.hvCellMaxV, 3);
+    writeOptDouble("hv_soh_pct", st.hvSohPct, 1);
+    writeOptDouble("hv_energy_rem_kwh", st.hvEnergyRemKwh, 2);
+    writeOptDouble("trip_ev_kwh_100km", st.tripEvKwh100km, 1);
     writeOptDouble("ecu_12v_v", st.ecu12vV, 2);
     writeOptDouble("odometer_km", st.odometerKm, 1);
-    writeOptDouble("aux_12v_v", st.aux12vV, 2, false);
+    writeOptDouble("aux_12v_v", st.aux12vV, 2);
+    out << "  \"last_trip\": " << (st.lastTripJson.empty() ? "null" : st.lastTripJson) << "\n";
     out << "}\n";
 
     std::ofstream f(TELEMETRY_JSON_TMP, std::ios::out | std::ios::trunc);
@@ -748,6 +813,44 @@ std::optional<double> parseAtrvVoltage(const std::string& raw) {
     return std::nullopt;
 }
 
+// Decode Mode 03 response ("43 ...") into standard ISO 15031-6 DTC strings (P0xxx, C0xxx, B0xxx, U0xxx)
+std::string decodeMode03Dtcs(const std::string& raw) {
+    auto hex = extractHexPayload(raw, "43");
+    if (!hex.has_value() || hex->size() < 4) {
+        return "NONE";
+    }
+    static const char kSysPrefix[4] = {'P', 'C', 'B', 'U'};
+    std::vector<std::string> codes;
+    // Skip byte 0 if it is a DTC count byte (ISO 15765-4 CAN Mode 03 format: 43 <count> <DTC1_H> <DTC1_L>...)
+    size_t offset = ((hex->size() % 4) == 2) ? 1 : 0;
+    while (offset * 2 + 4 <= hex->size()) {
+        auto b0 = parseHexByte(*hex, offset);
+        auto b1 = parseHexByte(*hex, offset + 1);
+        offset += 2;
+        if (!b0 || !b1 || (*b0 == 0 && *b1 == 0)) {
+            continue;
+        }
+        char code[8];
+        char sys = kSysPrefix[(*b0 >> 6) & 0x03];
+        int d1 = (*b0 >> 4) & 0x03;
+        int d2 = (*b0) & 0x0F;
+        snprintf(code, sizeof(code), "%c%d%X%02X", sys, d1, d2, *b1);
+        codes.push_back(code);
+        if (codes.size() >= 5) {
+            break;
+        }
+    }
+    if (codes.empty()) {
+        return "NONE";
+    }
+    std::ostringstream ss;
+    for (size_t i = 0; i < codes.size(); ++i) {
+        if (i > 0) ss << ", ";
+        ss << codes[i];
+    }
+    return ss.str();
+}
+
 } // namespace
 
 int main() {
@@ -759,6 +862,10 @@ int main() {
 
     TelemetryState state;
     state.adapterMac = getConfiguredObdMac();
+    std::string savedLastTrip = readFirstLine(LAST_TRIP_JSON_PATH);
+    if (!savedLastTrip.empty() && savedLastTrip.front() == '{') {
+        state.lastTripJson = savedLastTrip;
+    }
     state.driveMode = "WAITING FOR BLUETOOTH...";
     writeTelemetrySnapshot(state);
 
@@ -1100,12 +1207,31 @@ int main() {
                         }
                     }
                 }
+                if (state.tripDurationSec > 5) {
+                    state.tripAvgSpeedKmh = static_cast<int>(
+                        std::round((state.tripDistanceKm * 3600.0) / state.tripDurationSec));
+                }
+                if (state.tripDistanceKm >= 0.25) {
+                    double netKwh = std::max(0.0, state.tripEvKwhUsed - state.tripRegenKwh);
+                    state.tripEvKwh100km = (netKwh * 100.0) / state.tripDistanceKm;
+                }
                 ++totalActiveSamples;
                 if (state.iceRpm == 0) {
                     ++evSamples;
                 }
                 if (totalActiveSamples > 0) {
                     state.tripEvRatioPct = (static_cast<double>(evSamples) * 100.0) / static_cast<double>(totalActiveSamples);
+                }
+
+                // Estimate remaining usable HV energy (kWh) and EV range (km)
+                if (state.hvSocDisplayPct.has_value()) {
+                    double usablePackKwh = 10.4 * (state.hvSohPct.value_or(94.0) / 100.0);
+                    state.hvEnergyRemKwh = usablePackKwh * (*state.hvSocDisplayPct / 100.0);
+                    double refKwh100km = state.tripEvKwh100km.value_or(18.5);
+                    if (refKwh100km < 10.0 || refKwh100km > 40.0) {
+                        refKwh100km = 18.5;
+                    }
+                    state.evRangeEstKm = static_cast<int>(std::round((*state.hvEnergyRemKwh * 100.0) / refKwh100km));
                 }
 
                 // Medium loop (every 3rd active cycle): Thermal, Fuel & MQB GTE HV BMC (7E5) UDS PIDs
@@ -1119,6 +1245,14 @@ int main() {
                         if (auto b = parseHexByte(*oilHex, 0)) {
                             state.iceOilC = *b - 40;
                         }
+                    }
+                    int refEngineTemp = state.iceOilC.value_or(state.iceCoolantC.value_or(20));
+                    if (refEngineTemp >= 80) {
+                        state.iceWarmupStatus = "OPTIMAL (GTE READY)";
+                    } else if (refEngineTemp >= 60) {
+                        state.iceWarmupStatus = "WARMING UP";
+                    } else {
+                        state.iceWarmupStatus = "COLD (AVOID KICKDOWN)";
                     }
                     if (auto iatHex = extractHexPayload(elm.sendCommand("010F", 600), "410F")) {
                         if (auto b = parseHexByte(*iatHex, 0)) {
@@ -1146,12 +1280,17 @@ int main() {
                         }
                     }
                     if ((cycleCount % 12) == 0) {
-                        // Poll MIL / DTC count (0101) and Odometer (01A6)
+                        // Poll MIL / DTC count (0101), stored DTC codes (03), and Odometer (01A6)
                         if (auto dtcHex = extractHexPayload(elm.sendCommand("0101", 600), "4101")) {
                             if (auto b0 = parseHexByte(*dtcHex, 0)) {
                                 state.milOn = ((*b0 & 0x80) != 0);
                                 state.dtcCount = (*b0 & 0x7F);
                             }
+                        }
+                        if (state.dtcCount > 0 || state.milOn) {
+                            state.dtcCodes = decodeMode03Dtcs(elm.sendCommand("03", 800));
+                        } else {
+                            state.dtcCodes = "NONE";
                         }
                         if (auto odoHex = extractHexPayload(elm.sendCommand("01A6", 700), "41A6")) {
                             auto b0 = parseHexByte(*odoHex, 0);
@@ -1166,6 +1305,7 @@ int main() {
                                 state.odometerKm = rawOdo / 10.0;
                             }
                         }
+                        saveLastTripSummary(state);
                     }
 
                     // Query Passat GTE Hybrid Battery Management (J840 / BMC: TX 7E5, RX 7ED)
@@ -1189,6 +1329,12 @@ int main() {
                             double v = (*w > 10000) ? (*w / 100.0) : (*w / 10.0);
                             if (v >= 150.0 && v <= 460.0) {
                                 state.hvVoltageV = v;
+                                // Derive mean 96s cell voltage if individual min/max cell DIDs are not yet read
+                                if (!state.hvCellMinV.has_value()) {
+                                    state.hvCellMinV = v / 96.0;
+                                    state.hvCellMaxV = v / 96.0;
+                                    state.hvCellDeltaMv = 0;
+                                }
                             }
                         }
                     }
@@ -1205,6 +1351,46 @@ int main() {
 
                     if (state.hvVoltageV.has_value() && state.hvCurrentA.has_value()) {
                         state.hvPowerKw = (*state.hvVoltageV * *state.hvCurrentA) / 1000.0;
+                        if (*state.hvPowerKw < state.tripPeakDischargeKw) {
+                            state.tripPeakDischargeKw = *state.hvPowerKw;
+                        }
+                        if (*state.hvPowerKw > state.tripPeakRegenKw) {
+                            state.tripPeakRegenKw = *state.hvPowerKw;
+                        }
+                    }
+
+                    // Query HV Cell Min/Max Voltage (221E33 / 221E34) & Usable Capacity SOH (221E32) every 6th cycle
+                    if ((cycleCount % 6) == 0) {
+                        if (auto cMinHex = extractHexPayload(elm.sendCommand("221E33", 700), "621E33")) {
+                            if (auto w = parseHexWordU16(*cMinHex, 0)) {
+                                double cv = (*w > 1000) ? (*w / 1000.0) : (*w / 100.0);
+                                if (cv >= 2.5 && cv <= 4.35) {
+                                    state.hvCellMinV = cv;
+                                }
+                            }
+                        }
+                        if (auto cMaxHex = extractHexPayload(elm.sendCommand("221E34", 700), "621E34")) {
+                            if (auto w = parseHexWordU16(*cMaxHex, 0)) {
+                                double cv = (*w > 1000) ? (*w / 1000.0) : (*w / 100.0);
+                                if (cv >= 2.5 && cv <= 4.35) {
+                                    state.hvCellMaxV = cv;
+                                }
+                            }
+                        }
+                        if (state.hvCellMinV.has_value() && state.hvCellMaxV.has_value() &&
+                            *state.hvCellMaxV >= *state.hvCellMinV) {
+                            state.hvCellDeltaMv = static_cast<int>(
+                                std::round((*state.hvCellMaxV - *state.hvCellMinV) * 1000.0));
+                        }
+                        if (auto capHex = extractHexPayload(elm.sendCommand("221E32", 700), "621E32")) {
+                            if (auto w = parseHexWordU16(*capHex, 0)) {
+                                // Nominal Passat B8 GTE cell capacity is 37.0 Ah (or 10400 Wh net)
+                                double ah = (*w > 1000) ? (*w / 100.0) : (*w / 10.0);
+                                if (ah >= 15.0 && ah <= 42.0) {
+                                    state.hvSohPct = std::min(100.0, (ah / 37.0) * 100.0);
+                                }
+                            }
+                        }
                     }
 
                     if (auto tMinHex = extractHexPayload(elm.sendCommand("221E0E", 800), "621E0E")) {
@@ -1279,7 +1465,12 @@ int main() {
                 if (wasIgnitionOnThisSession && state.aux12vV.value_or(13.0) < 12.85) {
                     ++consecutiveNoDataAfterRun;
                     if (consecutiveNoDataAfterRun >= 3) {
-                        Logger::instance()->info("OBD Telemetry: Ignition OFF after drive; entering low-power standby\n");
+                        Logger::instance()->info("OBD Telemetry: Ignition OFF after drive; saving trip summary and entering low-power standby\n");
+                        saveLastTripSummary(state);
+                        std::string saved = readFirstLine(LAST_TRIP_JSON_PATH);
+                        if (!saved.empty() && saved.front() == '{') {
+                            state.lastTripJson = saved;
+                        }
                         elm.sendCommand("ATLP", 400);
                         elm.closeSession();
                         try { (*devDisconnect)(); } catch (...) {}

@@ -494,6 +494,14 @@
             <div class="label">HV Cell Temp (Min / Max / Δ)</div>
             <div class="value" id="gte-hvtemp">-</div>
           </div>
+          <div class="metric">
+            <div class="label">96s Cell Voltage (Min / Max / ΔmV)</div>
+            <div class="value" id="gte-cells">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Est. EV Range / Usable Energy / SOH</div>
+            <div class="value" id="gte-range-soh">-</div>
+          </div>
         </div>
       </div>
 
@@ -516,6 +524,14 @@
             <div class="label">Throttle Pedal / Fuel Rate</div>
             <div class="value" id="gte-fuelrate">-</div>
           </div>
+          <div class="metric">
+            <div class="label">1.4 TSI Thermal Kickdown Guard</div>
+            <div class="value" id="gte-warmup">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Stored Fault Codes (Mode 03)</div>
+            <div class="value" id="gte-dtccodes">-</div>
+          </div>
         </div>
       </div>
 
@@ -523,12 +539,16 @@
         <h2>Live Trip Computer &amp; 12V Electrical</h2>
         <div class="grid">
           <div class="metric">
-            <div class="label">Trip Distance / Zero-Emission EV %</div>
+            <div class="label">Trip Distance / Avg Speed / EV %</div>
             <div class="value" id="gte-trip">-</div>
           </div>
           <div class="metric">
-            <div class="label">EV Energy Used / Regen Recovered</div>
+            <div class="label">EV Energy Used / Regen / Net Eff.</div>
             <div class="value" id="gte-energy">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Trip Peak HV Power (Drive / Regen)</div>
+            <div class="value" id="gte-peak">-</div>
           </div>
           <div class="metric">
             <div class="label">12V Aux Battery (OBD / ECU)</div>
@@ -537,6 +557,10 @@
           <div class="metric">
             <div class="label">Ambient Temp / Fuel Tank Level</div>
             <div class="value" id="gte-env">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Previous Saved Trip (/persist)</div>
+            <div class="value" id="gte-lasttrip">-</div>
           </div>
         </div>
       </div>
@@ -829,6 +853,12 @@
             (g.hv_voltage_v ?? '-') + ' V / ' + (g.hv_current_a ?? '-') + ' A';
           document.getElementById('gte-hvtemp').textContent =
             (g.hv_temp_min_c ?? '-') + '°C / ' + (g.hv_temp_max_c ?? '-') + '°C (Δ ' + (g.hv_temp_spread_c ?? '-') + '°C)';
+          document.getElementById('gte-cells').textContent =
+            (g.hv_cell_min_v ?? '-') + ' V / ' + (g.hv_cell_max_v ?? '-') + ' V (Δ ' + (g.hv_cell_delta_mv ?? '-') + ' mV)';
+          const rangeStr = (g.ev_range_est_km !== null && g.ev_range_est_km !== undefined) ? ('~' + g.ev_range_est_km + ' km') : '-';
+          const remKwhStr = (g.hv_energy_rem_kwh !== null && g.hv_energy_rem_kwh !== undefined) ? (g.hv_energy_rem_kwh + ' kWh') : '-';
+          const sohStr = (g.hv_soh_pct !== null && g.hv_soh_pct !== undefined) ? ('SOH ' + g.hv_soh_pct + '%') : '96s Li-Ion';
+          document.getElementById('gte-range-soh').textContent = rangeStr + ' • ' + remKwhStr + ' (' + sohStr + ')';
 
           document.getElementById('gte-ice').textContent =
             (g.ice_rpm ?? 0) + ' RPM • Load ' + (g.ice_load_pct ?? 0) + '%';
@@ -844,16 +874,35 @@
             : ((g.fuel_rate_lph ?? 0) + ' L/h');
           document.getElementById('gte-fuelrate').textContent =
             'Pedal ' + (g.throttle_pct ?? '-') + '% • ' + fuelRateStr;
+          const warm = g.ice_warmup_status || 'COLD';
+          const warmClass = warm.indexOf('OPTIMAL') >= 0 ? 'ok' : 'warn';
+          document.getElementById('gte-warmup').innerHTML =
+            '<span class="badge ' + warmClass + '">' + warm + '</span>';
+          document.getElementById('gte-dtccodes').innerHTML = (g.dtc_codes && g.dtc_codes !== 'NONE')
+            ? '<span class="badge err">' + g.dtc_codes + '</span>'
+            : '<span class="badge ok">NONE (Clean)</span>';
 
           document.getElementById('gte-trip').textContent =
-            (g.trip_distance_km ?? 0) + ' km • ' + (g.trip_ev_ratio_pct ?? 100) + '% EV';
+            (g.trip_distance_km ?? 0) + ' km • Avg ' + (g.trip_avg_speed_kmh ?? 0) + ' km/h • ' + (g.trip_ev_ratio_pct ?? 100) + '% EV';
+          const effStr = (g.trip_ev_kwh_100km !== null && g.trip_ev_kwh_100km !== undefined)
+            ? (' (' + g.trip_ev_kwh_100km + ' kWh/100km)')
+            : '';
           document.getElementById('gte-energy').textContent =
-            '-' + (g.trip_ev_kwh_used ?? 0) + ' kWh / +' + (g.trip_regen_kwh ?? 0) + ' kWh';
+            '-' + (g.trip_ev_kwh_used ?? 0) + ' / +' + (g.trip_regen_kwh ?? 0) + ' kWh' + effStr;
+          document.getElementById('gte-peak').textContent =
+            (g.trip_peak_discharge_kw ?? 0) + ' kW / +' + (g.trip_peak_regen_kw ?? 0) + ' kW';
           const obdV = (g.aux_12v_v !== null && g.aux_12v_v !== undefined) ? (g.aux_12v_v + ' V') : '-';
           const ecuV = (g.ecu_12v_v !== null && g.ecu_12v_v !== undefined) ? (g.ecu_12v_v + ' V') : '-';
           document.getElementById('gte-12v').textContent = obdV + ' / ' + ecuV;
           document.getElementById('gte-env').textContent =
             (g.ambient_c ?? '-') + '°C • Tank ' + (g.fuel_level_pct ?? '-') + '%';
+          if (g.last_trip && g.last_trip.distance_km !== undefined) {
+            const lt = g.last_trip;
+            document.getElementById('gte-lasttrip').textContent =
+              lt.distance_km + ' km • ' + (lt.ev_ratio_pct ?? 100) + '% EV • -' + (lt.ev_kwh_used ?? 0) + ' kWh';
+          } else {
+            document.getElementById('gte-lasttrip').textContent = 'No saved trip yet';
+          }
         }
       } catch (e) {
         document.getElementById('hdr-dot').className = 'dot err';
