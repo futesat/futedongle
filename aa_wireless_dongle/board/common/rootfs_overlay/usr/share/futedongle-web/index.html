@@ -959,6 +959,36 @@
             document.getElementById('gte-gps').textContent = 'Tap Pin Phone GPS';
             mapBtn.style.display = 'none';
           }
+          if (g.last_trip && g.last_trip.distance_km !== undefined) {
+            const lt = g.last_trip;
+            document.getElementById('gte-lasttrip').textContent =
+              lt.distance_km + ' km (' + (lt.ev_km ?? 0) + ' EV / ' + (lt.ice_km ?? 0) + ' ICE) • ' + (lt.ev_ratio_pct ?? 100) + '% EV';
+          } else {
+            document.getElementById('gte-lasttrip').textContent = 'No saved trip yet';
+          }
+
+          document.getElementById('gte-split-trip').textContent =
+            'EV ' + (g.trip_ev_km ?? 0) + ' km • Hybrid ' + (g.trip_ice_km ?? 0) + ' km';
+          document.getElementById('gte-split-life').textContent =
+            'EV ' + (g.lifetime_ev_km ?? 0) + ' km • Hybrid ' + (g.lifetime_ice_km ?? 0) + ' km (Tot ' + (g.lifetime_total_km ?? 0) + ' km)';
+          const evR = (g.ev_range_est_km !== null && g.ev_range_est_km !== undefined) ? (g.ev_range_est_km + ' km EV') : '- EV';
+          const fuR = (g.fuel_range_est_km !== null && g.fuel_range_est_km !== undefined) ? (g.fuel_range_est_km + ' km Gas (' + (g.fuel_liters_rem ?? '-') + 'L)') : '- Gas';
+          const totR = (g.total_range_est_km !== null && g.total_range_est_km !== undefined) ? (' = ~' + g.total_range_est_km + ' km') : '';
+          document.getElementById('gte-total-range').textContent = evR + ' + ' + fuR + totR;
+          document.getElementById('gte-dtc-km').textContent =
+            'Clean ' + (g.km_since_dtc_clear ?? '-') + ' km • MIL ' + (g.km_with_mil_on ?? 0) + ' km';
+
+          const lat = g.gps_lat ?? (d.car_gps ? d.car_gps.lat : null);
+          const lon = g.gps_lon ?? (d.car_gps ? d.car_gps.lon : null);
+          const mapBtn = document.getElementById('gte-map-link');
+          if (lat !== null && lat !== undefined && lon !== null && lon !== undefined) {
+            document.getElementById('gte-gps').textContent = Number(lat).toFixed(5) + ', ' + Number(lon).toFixed(5);
+            mapBtn.href = 'https://maps.google.com/?q=' + encodeURIComponent(lat + ',' + lon);
+            mapBtn.style.display = 'inline-flex';
+          } else {
+            document.getElementById('gte-gps').textContent = 'Tap Pin Phone GPS';
+            mapBtn.style.display = 'none';
+          }
         }
       } catch (e) {
         document.getElementById('hdr-dot').className = 'dot err';
