@@ -382,6 +382,10 @@
             <div class="label">Garage Door Trigger</div>
             <div class="value" id="st-garage">-</div>
           </div>
+          <div class="metric">
+            <div class="label">Vgate iCar Pro 2S BLE</div>
+            <div class="value" id="st-obd">-</div>
+          </div>
         </div>
       </div>
 
@@ -439,11 +443,27 @@
     <!-- TAB 2: TELEMETRY -->
     <section id="tab-gte" class="tab">
       <div class="card">
-        <h2>Telemetry</h2>
+        <h2>Passat B8 GTE Live OBD-II Telemetry</h2>
         <p id="gte-banner" style="font-size:0.83rem;color:var(--muted);margin-bottom:10px;">
-          Waiting for live OBD-II BLE stream (/run/gte_telemetry.json)...
+          Waiting for Vgate iCar Pro 2S BLE stream (/run/gte_telemetry.json)...
         </p>
         <div class="grid">
+          <div class="metric">
+            <div class="label">Vgate BLE Adapter</div>
+            <div class="value" id="gte-adapter">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Ignition / START Button</div>
+            <div class="value" id="gte-ign">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Drive Mode</div>
+            <div class="value" id="gte-mode">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Vehicle Speed</div>
+            <div class="value" id="gte-speed">-</div>
+          </div>
           <div class="metric">
             <div class="label">HV Battery SoC (Display / Gross)</div>
             <div class="value" id="gte-soc">-</div>
@@ -461,12 +481,20 @@
             <div class="value" id="gte-hvtemp">-</div>
           </div>
           <div class="metric">
-            <div class="label">1.4 TSI RPM / Oil Temp</div>
+            <div class="label">1.4 TSI RPM / Coolant / Oil</div>
             <div class="value" id="gte-ice">-</div>
           </div>
           <div class="metric">
-            <div class="label">12V Aux Battery</div>
+            <div class="label">12V Aux Battery (ATRV)</div>
             <div class="value" id="gte-12v">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Ambient Temp / Fuel Tank</div>
+            <div class="value" id="gte-env">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">OBD Garage Start Trigger</div>
+            <div class="value" id="gte-garage">-</div>
           </div>
         </div>
       </div>
@@ -537,13 +565,20 @@
 
           <div class="section-divider">
             <h3>Garage Door Opener (S38garage_opener)</h3>
-            <p>Probes the garage Wi-Fi AP on boot and fires the UDP trigger only when Android Auto enters foreground video on the head unit screen, then automatically reconnects 5 GHz Android Auto.</p>
+            <p>Probes the garage Wi-Fi AP on boot (without opening on keyfob unlock) and fires the UDP trigger when the car START button is pressed via OBD-II (or on Android Auto foreground video).</p>
           </div>
           <div class="form-row">
-            <label>Garage Opener on Power-Up (AAWG_ENABLE_GARAGE_OPEN)</label>
+            <label>Garage Opener (AAWG_ENABLE_GARAGE_OPEN)</label>
             <select name="AAWG_ENABLE_GARAGE_OPEN" id="cfg-garage-en">
               <option value="1">1 — Enabled</option>
               <option value="0">0 — Disabled</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Garage Trigger Mode (AAWG_GARAGE_TRIGGER_MODE)</label>
+            <select name="AAWG_GARAGE_TRIGGER_MODE" id="cfg-garage-mode">
+              <option value="obd_start">obd_start — On Car START Button (Vgate iCar Pro 2S OBD-II)</option>
+              <option value="aa_video">aa_video — On Android Auto Foreground Video (MIB3 Screen)</option>
             </select>
           </div>
           <div class="form-row">
@@ -597,13 +632,14 @@
           <div class="form-row">
             <label>OBD-II BLE Telemetry (AAWG_ENABLE_OBD_TELEMETRY)</label>
             <select name="AAWG_ENABLE_OBD_TELEMETRY" id="cfg-obd">
+              <option value="1">1 — Enabled (Default)</option>
               <option value="0">0 — Disabled</option>
-              <option value="1">1 — Enabled</option>
             </select>
           </div>
           <div class="form-row">
             <label>OBD-II BLE Adapter MAC (AAWG_OBD_BLE_MAC)</label>
-            <input type="text" name="AAWG_OBD_BLE_MAC" id="cfg-obdmac" placeholder="00:1D:A5:XX:XX:XX" maxlength="17">
+            <small>Leave empty to auto-discover Vgate iCar Pro 2S ("IOS-Vlink") and cache in /persist/obd_ble_mac.</small>
+            <input type="text" name="AAWG_OBD_BLE_MAC" id="cfg-obdmac" placeholder="Auto-discover (IOS-Vlink)" maxlength="17">
           </div>
           <button type="submit" class="btn" style="width:100%;margin-top:6px;">Save to /boot/aawgd.conf</button>
         </form>
@@ -684,8 +720,18 @@
         document.getElementById('st-garage').innerHTML = d.garage_opened_once
           ? '<span class="badge ok">Opened This Boot</span>'
           : (d.garage_in_range
-              ? '<span class="badge warn">Armed (Wait Video)</span>'
+              ? '<span class="badge warn">Armed (Wait Car START)</span>'
               : '<span class="badge">Disarmed (Out of Range)</span>');
+        if (d.gte_telemetry) {
+          const g = d.gte_telemetry;
+          document.getElementById('st-obd').innerHTML = g.adapter_connected
+            ? (g.ignition_on
+                ? '<span class="badge ok">READY (' + (g.aux_12v_v ?? '-') + 'V)</span>'
+                : '<span class="badge warn">Standby (' + (g.aux_12v_v ?? '-') + 'V)</span>')
+            : '<span class="badge">' + (g.drive_mode || 'Searching BLE...') + '</span>';
+        } else {
+          document.getElementById('st-obd').innerHTML = '<span class="badge">Starting...</span>';
+        }
         document.getElementById('st-temp').textContent = d.soc_temp_c.toFixed(1) + ' °C';
         document.getElementById('st-cpu').textContent = d.cpu_freq_mhz + ' MHz • ' + (d.load_avg.split(' ')[0] || '');
         document.getElementById('st-uv').innerHTML = d.undervoltage_events === 0
@@ -706,17 +752,36 @@
         if (d.gte_telemetry) {
           const g = d.gte_telemetry;
           document.getElementById('gte-banner').textContent =
-            'Drive Mode: ' + (g.drive_mode || '-') + ' • Updated: ' + (g.timestamp_utc || 'live');
+            'Adapter: ' + (g.adapter_name || 'Vgate iCar Pro 2S') +
+            (g.adapter_mac ? ' (' + g.adapter_mac + ')' : '') +
+            ' • Updated: ' + (g.timestamp_utc || 'live');
+          document.getElementById('gte-adapter').innerHTML = g.adapter_connected
+            ? '<span class="badge ok">Connected' + (g.adapter_mac ? ' • ' + g.adapter_mac : '') + '</span>'
+            : '<span class="badge warn">' + (g.drive_mode || 'Scanning BLE...') + '</span>';
+          document.getElementById('gte-ign').innerHTML = g.ignition_on
+            ? '<span class="badge ok">START / IGNITION ON</span>'
+            : '<span class="badge warn">STANDBY (IGN OFF)</span>';
+          document.getElementById('gte-mode').textContent = g.drive_mode || '-';
+          document.getElementById('gte-speed').textContent = (g.speed_kmh ?? 0) + ' km/h';
           document.getElementById('gte-soc').textContent =
             (g.hv_soc_display_pct ?? '-') + '% / ' + (g.hv_soc_gross_pct ?? '-') + '%';
-          document.getElementById('gte-power').textContent = (g.hv_power_kw ?? '-') + ' kW';
+          document.getElementById('gte-power').textContent =
+            (g.hv_power_kw !== null && g.hv_power_kw !== undefined) ? (g.hv_power_kw + ' kW') : '-';
           document.getElementById('gte-vi').textContent =
             (g.hv_voltage_v ?? '-') + ' V / ' + (g.hv_current_a ?? '-') + ' A';
           document.getElementById('gte-hvtemp').textContent =
             (g.hv_temp_min_c ?? '-') + '°C / ' + (g.hv_temp_max_c ?? '-') + '°C';
           document.getElementById('gte-ice').textContent =
-            (g.ice_rpm ?? 0) + ' RPM / ' + (g.ice_oil_c ?? '-') + '°C';
-          document.getElementById('gte-12v').textContent = (g.aux_12v_v ?? '-') + ' V';
+            (g.ice_rpm ?? 0) + ' RPM • ' + (g.ice_coolant_c ?? '-') + '°C / ' + (g.ice_oil_c ?? '-') + '°C';
+          document.getElementById('gte-12v').textContent =
+            (g.aux_12v_v !== null && g.aux_12v_v !== undefined) ? (g.aux_12v_v + ' V') : '-';
+          document.getElementById('gte-env').textContent =
+            (g.ambient_c ?? '-') + '°C • ' + (g.fuel_level_pct ?? '-') + '%';
+          document.getElementById('gte-garage').innerHTML = (g.garage_triggered_by_obd || d.garage_opened_once)
+            ? '<span class="badge ok">Fired on START</span>'
+            : (d.garage_in_range
+                ? '<span class="badge warn">Armed (Press START)</span>'
+                : '<span class="badge">Disarmed</span>');
         }
       } catch (e) {
         document.getElementById('hdr-dot').className = 'dot err';
@@ -748,6 +813,7 @@
         document.getElementById('cfg-web').value = c.AAWG_ENABLE_WEB_PORTAL ?? '1';
         document.getElementById('cfg-ssh').value = c.AAWG_ENABLE_SSH ?? '0';
         document.getElementById('cfg-garage-en').value = c.AAWG_ENABLE_GARAGE_OPEN ?? '1';
+        document.getElementById('cfg-garage-mode').value = c.AAWG_GARAGE_TRIGGER_MODE ?? 'obd_start';
         document.getElementById('cfg-garage-ssid').value = c.AAWG_GARAGE_WIFI_SSID ?? 'MyGarageWiFi';
         document.getElementById('cfg-garage-hidden').value = c.AAWG_GARAGE_WIFI_HIDDEN ?? '1';
         document.getElementById('cfg-garage-band').value = c.AAWG_GARAGE_WIFI_BAND ?? '2.4';
@@ -756,7 +822,7 @@
         document.getElementById('cfg-garage-port').value = c.AAWG_GARAGE_UDP_PORT ?? '9876';
         document.getElementById('cfg-garage-payload').value = c.AAWG_GARAGE_UDP_PAYLOAD ?? 'OPEN_GARAGE';
         document.getElementById('cfg-garage-timeout').value = c.AAWG_GARAGE_TIMEOUT_SEC ?? '5';
-        document.getElementById('cfg-obd').value = c.AAWG_ENABLE_OBD_TELEMETRY ?? '0';
+        document.getElementById('cfg-obd').value = c.AAWG_ENABLE_OBD_TELEMETRY ?? '1';
         document.getElementById('cfg-obdmac').value = c.AAWG_OBD_BLE_MAC ?? '';
       } catch (e) {
         showToast('Failed to load configuration');

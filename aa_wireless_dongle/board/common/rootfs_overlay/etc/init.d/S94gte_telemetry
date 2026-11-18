@@ -1,0 +1,62 @@
+#!/bin/sh
+#
+# Start Passat GTE OBD-II BLE Telemetry & Car-Start Garage Trigger Daemon
+#
+
+DAEMON="gte_telemetryd"
+PIDFILE="/var/run/$DAEMON.pid"
+
+RETVAL=0
+
+load_conf() {
+	set -a
+	if [ -r /etc/aawgd.conf ]; then
+		. /etc/aawgd.conf
+	fi
+	if [ -r /boot/aawgd.conf ]; then
+		. /boot/aawgd.conf
+	fi
+	set +a
+}
+
+case "$1" in
+	start)
+		load_conf
+		if [ "${AAWG_ENABLE_OBD_TELEMETRY:-1}" != "1" ] && [ "${AAWG_GARAGE_TRIGGER_MODE:-obd_start}" != "obd_start" ]; then
+			echo "OBD Telemetry & OBD Car-Start trigger disabled; skipping $DAEMON."
+			exit 0
+		fi
+
+		printf "Starting $DAEMON: "
+		start-stop-daemon -S -b -q -m -p "$PIDFILE" -x "/usr/bin/$DAEMON"
+		RETVAL=$?
+		[ $RETVAL = 0 ] && echo "OK" || echo "FAIL"
+		;;
+	stop)
+		printf "Stopping $DAEMON: "
+		start-stop-daemon -K -q -p "$PIDFILE" 2>/dev/null || true
+		killall -q "$DAEMON" 2>/dev/null || true
+		S_TICK=0
+		while pidof "$DAEMON" >/dev/null 2>&1 && [ "$S_TICK" -lt 15 ]; do
+			sleep 0.1
+			S_TICK=$((S_TICK + 1))
+		done
+		if pidof "$DAEMON" >/dev/null 2>&1; then
+			killall -9 -q "$DAEMON" 2>/dev/null || true
+		fi
+		rm -f "$PIDFILE"
+		RETVAL=0
+		echo "OK"
+		;;
+	restart)
+		$0 stop
+		sleep 1
+		$0 start
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart}"
+		exit 1
+		;;
+esac
+
+exit $RETVAL

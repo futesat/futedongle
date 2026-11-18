@@ -161,7 +161,10 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
             break;
     }
 
+    const char* triggerModeEnv = getenv("AAWG_GARAGE_TRIGGER_MODE");
+    const std::string triggerMode = (triggerModeEnv && triggerModeEnv[0] != '\0') ? triggerModeEnv : "obd_start";
     const bool monitor_garage_video =
+        (triggerMode == "aa_video") &&
         (direction == ProxyDirection::TCP_to_USB) &&
         !s_garage_opener_fired_this_boot.load() &&
         (access("/var/run/garage_in_range", F_OK) == 0) &&
@@ -573,6 +576,14 @@ void AAWProxy::handleClient(int server_sock) {
         Logger::instance()->info("Executing runtime garage door opener sequence (/etc/init.d/S38garage_opener fire)\n");
         int rc = runGarageOpenerFire();
         Logger::instance()->info("Garage door opener sequence completed (rc=%d); restarting Android Auto session\n", rc);
+    } else if (access("/var/run/garage_firing", F_OK) == 0) {
+        // gte_telemetryd triggered S38garage_opener fire on Car START while proxy was active;
+        // wait for restore_ap() to finish and skip the 2s retry sleep in main().
+        Logger::instance()->info("Waiting for OBD-triggered garage Wi-Fi burst to finish restoring 5 GHz AP\n");
+        for (int i = 0; i < 120 && access("/var/run/garage_firing", F_OK) == 0; ++i) {
+            usleep(100000);
+        }
+        m_triggered_garage_opener = true;
     }
 }
 

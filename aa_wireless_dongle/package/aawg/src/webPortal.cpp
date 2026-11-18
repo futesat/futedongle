@@ -530,9 +530,10 @@ std::map<std::string, std::string> readConfigMap() {
         {"AAWG_ENABLE_SSH", "0"},
         {"AAWG_ENABLE_DEBUG_LOG", "0"},
         {"AAWG_ENABLE_WEB_PORTAL", "1"},
-        {"AAWG_ENABLE_OBD_TELEMETRY", "0"},
+        {"AAWG_ENABLE_OBD_TELEMETRY", "1"},
         {"AAWG_OBD_BLE_MAC", ""},
         {"AAWG_ENABLE_GARAGE_OPEN", "1"},
+        {"AAWG_GARAGE_TRIGGER_MODE", "obd_start"},
         {"AAWG_GARAGE_WIFI_SSID", "MyGarageWiFi"},
         {"AAWG_GARAGE_WIFI_HIDDEN", "1"},
         {"AAWG_GARAGE_WIFI_BAND", "2.4"},
@@ -697,6 +698,11 @@ void handlePostConfig(int clientFd, const std::string& body) {
                 sendJsonError(clientFd, "400 Bad Request", "AAWG_OBD_BLE_MAC must be XX:XX:XX:XX:XX:XX or empty");
                 return;
             }
+        } else if (k == "AAWG_GARAGE_TRIGGER_MODE") {
+            if (val != "obd_start" && val != "aa_video") {
+                sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_TRIGGER_MODE must be obd_start or aa_video");
+                return;
+            }
         } else if (k == "AAWG_GARAGE_WIFI_SSID") {
             if (!isPrintableAscii(val, 0, 32)) {
                 sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_WIFI_SSID must be up to 32 printable ASCII characters");
@@ -787,8 +793,9 @@ void handlePostConfig(int clientFd, const std::string& body) {
     }
     confContent << "\n######## Garage Door Opener (S38garage_opener) ########\n\n"
                 << "## Probes the garage Wi-Fi AP at boot (without opening the door on keyfob unlock)\n"
-                << "## and sends the UDP trigger only when Android Auto enters foreground video.\n"
+                << "## and sends the UDP trigger on Car START (obd_start) or AA foreground video (aa_video).\n"
                 << "AAWG_ENABLE_GARAGE_OPEN=" << cfg["AAWG_ENABLE_GARAGE_OPEN"] << "\n"
+                << "AAWG_GARAGE_TRIGGER_MODE=" << cfg["AAWG_GARAGE_TRIGGER_MODE"] << "\n"
                 << "AAWG_GARAGE_WIFI_SSID=" << shellQuote(cfg["AAWG_GARAGE_WIFI_SSID"]) << "\n"
                 << "AAWG_GARAGE_WIFI_HIDDEN=" << cfg["AAWG_GARAGE_WIFI_HIDDEN"] << "\n"
                 << "AAWG_GARAGE_WIFI_BAND=" << cfg["AAWG_GARAGE_WIFI_BAND"] << "\n"
@@ -824,6 +831,7 @@ void handlePostConfig(int clientFd, const std::string& body) {
         return;
     }
 
+    (void)system("(/etc/init.d/S94gte_telemetry restart) </dev/null >/dev/null 2>&1 &");
     sendHttpResponse(clientFd, "200 OK", "application/json; charset=utf-8",
                      "{\"ok\":true,\"message\":\"Configuration saved to /boot/aawgd.conf\"}");
 }

@@ -1,5 +1,9 @@
+#include <ctype.h>
 #include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
 #include <chrono>
+#include <fstream>
 
 #include "common.h"
 #include "bluetoothHandler.h"
@@ -206,10 +210,31 @@ void BluetoothHandler::clearHandoffInProgress() {
 }
 
 bool BluetoothHandler::connectDevice() {
+    if (access("/var/run/garage_firing", F_OK) == 0) {
+        Logger::instance()->info("Garage Wi-Fi burst in progress, pausing Bluetooth paging\n");
+        return true;
+    }
+
     int64_t lastHandoff = m_lastHandoffTimestampMs.load();
     if (lastHandoff > 0 && (currentTimeMs() - lastHandoff) < 10000) {
         Logger::instance()->info("Bluetooth handoff in progress, waiting for Wi-Fi TCP connection\n");
         return true;
+    }
+
+    std::string obdMac;
+    if (const char* envObd = getenv("AAWG_OBD_BLE_MAC"); envObd && envObd[0] != '\0') {
+        obdMac = envObd;
+    } else {
+        std::ifstream f("/var/run/obd_ble_mac");
+        if (!f.is_open()) {
+            f.open("/persist/obd_ble_mac");
+        }
+        if (f.is_open()) {
+            std::getline(f, obdMac);
+        }
+    }
+    for (char& c : obdMac) {
+        c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
     }
 
     DBus::ManagedObjects objects = getBluezObjects();
@@ -222,6 +247,32 @@ bool BluetoothHandler::connectDevice() {
                     Logger::instance()->info("Skipping unpaired bluetooth device at path: %s\n", path.c_str());
                     continue;
                 }
+
+                // Skip OBD-II BLE / Vgate iCar Pro 2S adapter so aawgd only pages phones
+                std::string devAddr, devName;
+                if (auto it = properties.find("Address"); it != properties.end()) {
+                    try { devAddr = it->second.to_string(); } catch (...) {}
+                }
+                if (auto it = properties.find("Name"); it != properties.end()) {
+                    try { devName = it->second.to_string(); } catch (...) {}
+                }
+                if (devName.empty()) {
+                    if (auto it = properties.find("Alias"); it != properties.end()) {
+                        try { devName = it->second.to_string(); } catch (...) {}
+                    }
+                }
+                for (char& c : devAddr) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+                for (char& c : devName) c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+
+                if ((!obdMac.empty() && !devAddr.empty() && obdMac.find(devAddr) != std::string::npos) ||
+                    devName.find("vlink") != std::string::npos ||
+                    devName.find("v-link") != std::string::npos ||
+                    devName.find("vgate") != std::string::npos ||
+                    devName.find("icar") != std::string::npos ||
+                    devName.find("obd") != std::string::npos) {
+                    continue;
+                }
+
                 device_paths.push_back(path);
             }
         }
@@ -408,5 +459,18 @@ void BluetoothHandler::powerOff() {
     if (Config::instance()->getConnectionStrategy() == ConnectionStrategy::DONGLE_MODE) {
         stopAdvertising();
     }
-    setPower(false);
+
+    // Keep hci0 powered ON for gte_telemetryd BLE GATT polling while disabling
+    // Discoverable/Pairable so the phone stays on the car's native HFP audio.
+    const char* obdEnv = getenv("AAWG_ENABLE_OBD_TELEMETRY");
+    const char* trigEnv = getenv("AAWG_GARAGE_TRIGGER_MODE");
+    const bool keepHciPoweredForBle =
+        (obdEnv && std::string(obdEnv) == "1") ||
+        (!trigEnv || trigEnv[0] == '\0' || std::string(trigEnv) == "obd_start");
+
+    if (keepHciPoweredForBle) {
+        setPairable(false);
+    } else {
+        setPower(false);
+    }
 }

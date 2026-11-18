@@ -189,6 +189,7 @@ restore_ap() {
 	if ! pidof dnsmasq >/dev/null 2>&1; then
 		dnsmasq >/dev/null 2>&1 || true
 	fi
+	rm -f /var/run/garage_firing 2>/dev/null || true
 
 	if [ "$AP_UP" = "1" ]; then
 		log_info "5 GHz Android Auto AP restored on wlan0 (10.0.0.1); ready for fast phone reconnect."
@@ -421,7 +422,7 @@ probe_garage_at_boot() {
 	} >> "$GARAGE_ENV_FILE"
 
 	touch "$GARAGE_IN_RANGE_FLAG"
-	log_info "Garage Wi-Fi '${SSID}' detected at boot (freq=${GARAGE_FREQ:-auto} MHz, ip=${GARAGE_IP:-dhcp}, mac=${GARAGE_TARGET_MAC:-arp}); armed for Android Auto foreground video trigger."
+	log_info "Garage Wi-Fi '${SSID}' detected at boot (freq=${GARAGE_FREQ:-auto} MHz, ip=${GARAGE_IP:-dhcp}, mac=${GARAGE_TARGET_MAC:-arp}); armed for trigger mode '${AAWG_GARAGE_TRIGGER_MODE:-obd_start}'."
 	return 0
 }
 
@@ -459,7 +460,8 @@ fire_garage_at_runtime() {
 	# Arm cleanup + unconditional 5 GHz AP restoration before touching hostapd
 	GARAGE_TOUCHED_WLAN0=1
 	NEED_RESTORE_AP=1
-	trap 'trap "" EXIT INT TERM; cleanup; restore_ap; exit 0' EXIT INT TERM
+	touch /var/run/garage_firing 2>/dev/null || true
+	trap 'trap "" EXIT INT TERM; cleanup; restore_ap; rm -f /var/run/garage_firing 2>/dev/null || true; exit 0' EXIT INT TERM
 
 	MAIN_PID=$$
 	HARD_LIMIT=$((TIMEOUT_SEC + 9))
