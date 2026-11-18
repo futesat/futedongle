@@ -443,13 +443,13 @@
     <!-- TAB 2: TELEMETRY -->
     <section id="tab-gte" class="tab">
       <div class="card">
-        <h2>Passat B8 GTE Live OBD-II Telemetry</h2>
+        <h2>Hybrid Drive &amp; OBD Garage Start Trigger</h2>
         <p id="gte-banner" style="font-size:0.83rem;color:var(--muted);margin-bottom:10px;">
           Waiting for Vgate iCar Pro 2S BLE stream (/run/gte_telemetry.json)...
         </p>
         <div class="grid">
           <div class="metric">
-            <div class="label">Vgate BLE Adapter</div>
+            <div class="label">Vgate BLE Adapter (IOS-Vlink)</div>
             <div class="value" id="gte-adapter">-</div>
           </div>
           <div class="metric">
@@ -457,19 +457,33 @@
             <div class="value" id="gte-ign">-</div>
           </div>
           <div class="metric">
-            <div class="label">Drive Mode</div>
+            <div class="label">GTE Drive Mode</div>
             <div class="value" id="gte-mode">-</div>
           </div>
           <div class="metric">
-            <div class="label">Vehicle Speed</div>
+            <div class="label">Vehicle Speed (Max)</div>
             <div class="value" id="gte-speed">-</div>
           </div>
+          <div class="metric">
+            <div class="label">OBD Garage Start Trigger</div>
+            <div class="value" id="gte-garage">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Odometer / Fault Codes</div>
+            <div class="value" id="gte-odo-dtc">-</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>High-Voltage Traction Battery (13 kWh Pack)</h2>
+        <div class="grid">
           <div class="metric">
             <div class="label">HV Battery SoC (Display / Gross)</div>
             <div class="value" id="gte-soc">-</div>
           </div>
           <div class="metric">
-            <div class="label">HV Instant Power</div>
+            <div class="label">HV Instant Power (Drive / Regen)</div>
             <div class="value" id="gte-power">-</div>
           </div>
           <div class="metric">
@@ -477,24 +491,52 @@
             <div class="value" id="gte-vi">-</div>
           </div>
           <div class="metric">
-            <div class="label">HV Cell Temp (Min / Max)</div>
+            <div class="label">HV Cell Temp (Min / Max / Δ)</div>
             <div class="value" id="gte-hvtemp">-</div>
           </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>1.4 TSI Turbo (EA211) &amp; DQ400e 6-Speed DSG</h2>
+        <div class="grid">
           <div class="metric">
-            <div class="label">1.4 TSI RPM / Coolant / Oil</div>
+            <div class="label">1.4 TSI RPM / Engine Load</div>
             <div class="value" id="gte-ice">-</div>
           </div>
           <div class="metric">
-            <div class="label">12V Aux Battery (ATRV)</div>
+            <div class="label">Coolant / Oil / DSG Temp</div>
+            <div class="value" id="gte-temps">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Turbo Boost / Intake Air</div>
+            <div class="value" id="gte-boost">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Throttle Pedal / Fuel Rate</div>
+            <div class="value" id="gte-fuelrate">-</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Live Trip Computer &amp; 12V Electrical</h2>
+        <div class="grid">
+          <div class="metric">
+            <div class="label">Trip Distance / Zero-Emission EV %</div>
+            <div class="value" id="gte-trip">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">EV Energy Used / Regen Recovered</div>
+            <div class="value" id="gte-energy">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">12V Aux Battery (OBD / ECU)</div>
             <div class="value" id="gte-12v">-</div>
           </div>
           <div class="metric">
-            <div class="label">Ambient Temp / Fuel Tank</div>
+            <div class="label">Ambient Temp / Fuel Tank Level</div>
             <div class="value" id="gte-env">-</div>
-          </div>
-          <div class="metric">
-            <div class="label">OBD Garage Start Trigger</div>
-            <div class="value" id="gte-garage">-</div>
           </div>
         </div>
       </div>
@@ -762,26 +804,56 @@
             ? '<span class="badge ok">START / IGNITION ON</span>'
             : '<span class="badge warn">STANDBY (IGN OFF)</span>';
           document.getElementById('gte-mode').textContent = g.drive_mode || '-';
-          document.getElementById('gte-speed').textContent = (g.speed_kmh ?? 0) + ' km/h';
-          document.getElementById('gte-soc').textContent =
-            (g.hv_soc_display_pct ?? '-') + '% / ' + (g.hv_soc_gross_pct ?? '-') + '%';
-          document.getElementById('gte-power').textContent =
-            (g.hv_power_kw !== null && g.hv_power_kw !== undefined) ? (g.hv_power_kw + ' kW') : '-';
-          document.getElementById('gte-vi').textContent =
-            (g.hv_voltage_v ?? '-') + ' V / ' + (g.hv_current_a ?? '-') + ' A';
-          document.getElementById('gte-hvtemp').textContent =
-            (g.hv_temp_min_c ?? '-') + '°C / ' + (g.hv_temp_max_c ?? '-') + '°C';
-          document.getElementById('gte-ice').textContent =
-            (g.ice_rpm ?? 0) + ' RPM • ' + (g.ice_coolant_c ?? '-') + '°C / ' + (g.ice_oil_c ?? '-') + '°C';
-          document.getElementById('gte-12v').textContent =
-            (g.aux_12v_v !== null && g.aux_12v_v !== undefined) ? (g.aux_12v_v + ' V') : '-';
-          document.getElementById('gte-env').textContent =
-            (g.ambient_c ?? '-') + '°C • ' + (g.fuel_level_pct ?? '-') + '%';
+          document.getElementById('gte-speed').textContent =
+            (g.speed_kmh ?? 0) + ' km/h (Max ' + (g.trip_max_speed_kmh ?? 0) + ')';
           document.getElementById('gte-garage').innerHTML = (g.garage_triggered_by_obd || d.garage_opened_once)
             ? '<span class="badge ok">Fired on START</span>'
             : (d.garage_in_range
                 ? '<span class="badge warn">Armed (Press START)</span>'
                 : '<span class="badge">Disarmed</span>');
+          const odoStr = (g.odometer_km !== null && g.odometer_km !== undefined) ? (g.odometer_km + ' km') : 'Odo N/A';
+          const dtcBadge = g.mil_on
+            ? '<span class="badge err">MIL (' + (g.dtc_count ?? 0) + ' DTC)</span>'
+            : '<span class="badge ok">0 DTC</span>';
+          document.getElementById('gte-odo-dtc').innerHTML = odoStr + ' • ' + dtcBadge;
+
+          document.getElementById('gte-soc').textContent =
+            (g.hv_soc_display_pct ?? '-') + '% / ' + (g.hv_soc_gross_pct ?? '-') + '%';
+          if (g.hv_power_kw !== null && g.hv_power_kw !== undefined) {
+            const pTag = g.hv_power_kw > 0.2 ? ' (Regen/Chg)' : (g.hv_power_kw < -0.2 ? ' (Drive)' : '');
+            document.getElementById('gte-power').textContent = g.hv_power_kw + ' kW' + pTag;
+          } else {
+            document.getElementById('gte-power').textContent = '-';
+          }
+          document.getElementById('gte-vi').textContent =
+            (g.hv_voltage_v ?? '-') + ' V / ' + (g.hv_current_a ?? '-') + ' A';
+          document.getElementById('gte-hvtemp').textContent =
+            (g.hv_temp_min_c ?? '-') + '°C / ' + (g.hv_temp_max_c ?? '-') + '°C (Δ ' + (g.hv_temp_spread_c ?? '-') + '°C)';
+
+          document.getElementById('gte-ice').textContent =
+            (g.ice_rpm ?? 0) + ' RPM • Load ' + (g.ice_load_pct ?? 0) + '%';
+          document.getElementById('gte-temps').textContent =
+            'Cool ' + (g.ice_coolant_c ?? '-') + '°C • Oil ' + (g.ice_oil_c ?? '-') + '°C • DSG ' + (g.dsg_temp_c ?? '-') + '°C';
+          const boostStr = (g.turbo_boost_bar !== null && g.turbo_boost_bar !== undefined)
+            ? ((g.turbo_boost_bar >= 0 ? '+' : '') + g.turbo_boost_bar + ' bar')
+            : '-';
+          document.getElementById('gte-boost').textContent =
+            boostStr + ' • IAT ' + (g.intake_air_c ?? '-') + '°C';
+          const fuelRateStr = (g.fuel_l100km !== null && g.fuel_l100km !== undefined && g.speed_kmh > 3)
+            ? (g.fuel_l100km + ' L/100km')
+            : ((g.fuel_rate_lph ?? 0) + ' L/h');
+          document.getElementById('gte-fuelrate').textContent =
+            'Pedal ' + (g.throttle_pct ?? '-') + '% • ' + fuelRateStr;
+
+          document.getElementById('gte-trip').textContent =
+            (g.trip_distance_km ?? 0) + ' km • ' + (g.trip_ev_ratio_pct ?? 100) + '% EV';
+          document.getElementById('gte-energy').textContent =
+            '-' + (g.trip_ev_kwh_used ?? 0) + ' kWh / +' + (g.trip_regen_kwh ?? 0) + ' kWh';
+          const obdV = (g.aux_12v_v !== null && g.aux_12v_v !== undefined) ? (g.aux_12v_v + ' V') : '-';
+          const ecuV = (g.ecu_12v_v !== null && g.ecu_12v_v !== undefined) ? (g.ecu_12v_v + ' V') : '-';
+          document.getElementById('gte-12v').textContent = obdV + ' / ' + ecuV;
+          document.getElementById('gte-env').textContent =
+            (g.ambient_c ?? '-') + '°C • Tank ' + (g.fuel_level_pct ?? '-') + '%';
         }
       } catch (e) {
         document.getElementById('hdr-dot').className = 'dot err';

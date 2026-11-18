@@ -159,8 +159,15 @@ struct TelemetryState {
     int iceRpm{0};
     std::optional<int> iceCoolantC;
     std::optional<int> iceOilC;
+    std::optional<int> intakeAirC;
     std::optional<int> ambientC;
+    std::optional<int> dsgTempC;
+    std::optional<double> iceLoadPct;
+    std::optional<double> throttlePct;
+    std::optional<double> turboBoostBar;
     std::optional<double> fuelLevelPct;
+    std::optional<double> fuelRateLph;
+    std::optional<double> fuelL100km;
     std::optional<double> hvSocDisplayPct;
     std::optional<double> hvSocGrossPct;
     std::optional<double> hvVoltageV;
@@ -168,7 +175,18 @@ struct TelemetryState {
     std::optional<double> hvPowerKw;
     std::optional<double> hvTempMinC;
     std::optional<double> hvTempMaxC;
+    std::optional<double> hvTempSpreadC;
     std::optional<double> aux12vV;
+    std::optional<double> ecu12vV;
+    std::optional<double> odometerKm;
+    int dtcCount{0};
+    bool milOn{false};
+    double tripDistanceKm{0.0};
+    double tripEvRatioPct{100.0};
+    double tripEvKwhUsed{0.0};
+    double tripRegenKwh{0.0};
+    int tripMaxSpeedKmh{0};
+    int tripDurationSec{0};
 };
 
 void writeTelemetrySnapshot(const TelemetryState& st) {
@@ -184,6 +202,14 @@ void writeTelemetrySnapshot(const TelemetryState& st) {
     out << "  \"drive_mode\": \"" << jsonEscape(st.driveMode) << "\",\n";
     out << "  \"speed_kmh\": " << st.speedKmh << ",\n";
     out << "  \"ice_rpm\": " << st.iceRpm << ",\n";
+    out << "  \"dtc_count\": " << st.dtcCount << ",\n";
+    out << "  \"mil_on\": " << (st.milOn ? "true" : "false") << ",\n";
+    out << "  \"trip_distance_km\": " << std::setprecision(2) << st.tripDistanceKm << ",\n";
+    out << "  \"trip_ev_ratio_pct\": " << std::setprecision(1) << st.tripEvRatioPct << ",\n";
+    out << "  \"trip_ev_kwh_used\": " << std::setprecision(2) << st.tripEvKwhUsed << ",\n";
+    out << "  \"trip_regen_kwh\": " << std::setprecision(2) << st.tripRegenKwh << ",\n";
+    out << "  \"trip_max_speed_kmh\": " << st.tripMaxSpeedKmh << ",\n";
+    out << "  \"trip_duration_sec\": " << st.tripDurationSec << ",\n";
 
     auto writeOptInt = [&](const char* key, const std::optional<int>& val) {
         out << "  \"" << key << "\": ";
@@ -207,8 +233,15 @@ void writeTelemetrySnapshot(const TelemetryState& st) {
 
     writeOptInt("ice_coolant_c", st.iceCoolantC);
     writeOptInt("ice_oil_c", st.iceOilC);
+    writeOptInt("intake_air_c", st.intakeAirC);
     writeOptInt("ambient_c", st.ambientC);
+    writeOptInt("dsg_temp_c", st.dsgTempC);
+    writeOptDouble("ice_load_pct", st.iceLoadPct, 1);
+    writeOptDouble("throttle_pct", st.throttlePct, 1);
+    writeOptDouble("turbo_boost_bar", st.turboBoostBar, 2);
     writeOptDouble("fuel_level_pct", st.fuelLevelPct, 1);
+    writeOptDouble("fuel_rate_lph", st.fuelRateLph, 2);
+    writeOptDouble("fuel_l100km", st.fuelL100km, 1);
     writeOptDouble("hv_soc_display_pct", st.hvSocDisplayPct, 1);
     writeOptDouble("hv_soc_gross_pct", st.hvSocGrossPct, 1);
     writeOptDouble("hv_voltage_v", st.hvVoltageV, 1);
@@ -216,6 +249,9 @@ void writeTelemetrySnapshot(const TelemetryState& st) {
     writeOptDouble("hv_power_kw", st.hvPowerKw, 2);
     writeOptDouble("hv_temp_min_c", st.hvTempMinC, 1);
     writeOptDouble("hv_temp_max_c", st.hvTempMaxC, 1);
+    writeOptDouble("hv_temp_spread_c", st.hvTempSpreadC, 1);
+    writeOptDouble("ecu_12v_v", st.ecu12vV, 2);
+    writeOptDouble("odometer_km", st.odometerKm, 1);
     writeOptDouble("aux_12v_v", st.aux12vV, 2, false);
     out << "}\n";
 
@@ -906,9 +942,14 @@ int main() {
                                  state.adapterName.c_str(), state.adapterMac.c_str());
 
         std::optional<double> baselineResting12v;
+        std::optional<int> baroKpa;
         int consecutiveNoDataAfterRun = 0;
         bool wasIgnitionOnThisSession = false;
         uint64_t cycleCount = 0;
+        uint64_t evSamples = 0;
+        uint64_t totalActiveSamples = 0;
+        auto lastSampleTime = std::chrono::steady_clock::now();
+        auto tripStartTime = std::chrono::steady_clock::now();
 
         while (!g_shouldExit.load()) {
             if (access(GARAGE_FIRING_FLAG, F_OK) == 0) {
@@ -980,6 +1021,16 @@ int main() {
             }
 
             if (state.ignitionOn) {
+                auto now = std::chrono::steady_clock::now();
+                if (!wasIgnitionOnThisSession) {
+                    tripStartTime = now;
+                    lastSampleTime = now;
+                }
+                double dtHours = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastSampleTime).count() / 3600000.0;
+                lastSampleTime = now;
+                state.tripDurationSec = static_cast<int>(
+                    std::chrono::duration_cast<std::chrono::seconds>(now - tripStartTime).count());
+
                 wasIgnitionOnThisSession = true;
                 consecutiveNoDataAfterRun = 0;
 
@@ -987,7 +1038,48 @@ int main() {
                 if (auto spdHex = extractHexPayload(elm.sendCommand("010D", 700), "410D")) {
                     if (auto spd = parseHexByte(*spdHex, 0)) {
                         state.speedKmh = *spd;
+                        if (state.speedKmh > state.tripMaxSpeedKmh) {
+                            state.tripMaxSpeedKmh = state.speedKmh;
+                        }
                     }
+                }
+
+                // Poll Throttle Pedal Position (0111) & Engine Load (0104)
+                if (auto thrHex = extractHexPayload(elm.sendCommand("0111", 600), "4111")) {
+                    if (auto b = parseHexByte(*thrHex, 0)) {
+                        state.throttlePct = (*b * 100.0) / 255.0;
+                    }
+                }
+                if (state.iceRpm > 0) {
+                    if (auto loadHex = extractHexPayload(elm.sendCommand("0104", 600), "4104")) {
+                        if (auto b = parseHexByte(*loadHex, 0)) {
+                            state.iceLoadPct = (*b * 100.0) / 255.0;
+                        }
+                    }
+                    // Poll Manifold Absolute Pressure (010B) -> Turbo Boost bar
+                    if (auto mapHex = extractHexPayload(elm.sendCommand("010B", 600), "410B")) {
+                        if (auto mapKpa = parseHexByte(*mapHex, 0)) {
+                            int refBaro = baroKpa.value_or(100);
+                            state.turboBoostBar = (*mapKpa - refBaro) / 100.0;
+                        }
+                    }
+                    // Poll Instantaneous Fuel Rate (015E)
+                    if (auto frHex = extractHexPayload(elm.sendCommand("015E", 600), "415E")) {
+                        if (auto w = parseHexWordU16(*frHex, 0)) {
+                            double lph = *w / 20.0;
+                            state.fuelRateLph = lph;
+                            if (state.speedKmh > 3) {
+                                state.fuelL100km = (lph * 100.0) / state.speedKmh;
+                            } else {
+                                state.fuelL100km = std::nullopt;
+                            }
+                        }
+                    }
+                } else {
+                    state.iceLoadPct = 0.0;
+                    state.turboBoostBar = 0.0;
+                    state.fuelRateLph = 0.0;
+                    state.fuelL100km = 0.0;
                 }
 
                 // Poll Displayed HV Battery SoC (015B)
@@ -995,6 +1087,25 @@ int main() {
                     if (auto soc = parseHexByte(*socHex, 0)) {
                         state.hvSocDisplayPct = (*soc * 100.0) / 255.0;
                     }
+                }
+
+                // Integrate trip distance, EV driving ratio, and electric energy
+                if (dtHours > 0.0 && dtHours < 0.02) {
+                    state.tripDistanceKm += state.speedKmh * dtHours;
+                    if (state.hvPowerKw.has_value()) {
+                        if (*state.hvPowerKw < 0.0) {
+                            state.tripEvKwhUsed += (-*state.hvPowerKw) * dtHours;
+                        } else {
+                            state.tripRegenKwh += (*state.hvPowerKw) * dtHours;
+                        }
+                    }
+                }
+                ++totalActiveSamples;
+                if (state.iceRpm == 0) {
+                    ++evSamples;
+                }
+                if (totalActiveSamples > 0) {
+                    state.tripEvRatioPct = (static_cast<double>(evSamples) * 100.0) / static_cast<double>(totalActiveSamples);
                 }
 
                 // Medium loop (every 3rd active cycle): Thermal, Fuel & MQB GTE HV BMC (7E5) UDS PIDs
@@ -1009,6 +1120,11 @@ int main() {
                             state.iceOilC = *b - 40;
                         }
                     }
+                    if (auto iatHex = extractHexPayload(elm.sendCommand("010F", 600), "410F")) {
+                        if (auto b = parseHexByte(*iatHex, 0)) {
+                            state.intakeAirC = *b - 40;
+                        }
+                    }
                     if (auto ambHex = extractHexPayload(elm.sendCommand("0146", 700), "4146")) {
                         if (auto b = parseHexByte(*ambHex, 0)) {
                             state.ambientC = *b - 40;
@@ -1017,6 +1133,38 @@ int main() {
                     if (auto fuelHex = extractHexPayload(elm.sendCommand("012F", 700), "412F")) {
                         if (auto b = parseHexByte(*fuelHex, 0)) {
                             state.fuelLevelPct = (*b * 100.0) / 255.0;
+                        }
+                    }
+                    if (auto ecuVHex = extractHexPayload(elm.sendCommand("0142", 600), "4142")) {
+                        if (auto w = parseHexWordU16(*ecuVHex, 0)) {
+                            state.ecu12vV = *w / 1000.0;
+                        }
+                    }
+                    if (!baroKpa.has_value()) {
+                        if (auto baroHex = extractHexPayload(elm.sendCommand("0133", 600), "4133")) {
+                            baroKpa = parseHexByte(*baroHex, 0);
+                        }
+                    }
+                    if ((cycleCount % 12) == 0) {
+                        // Poll MIL / DTC count (0101) and Odometer (01A6)
+                        if (auto dtcHex = extractHexPayload(elm.sendCommand("0101", 600), "4101")) {
+                            if (auto b0 = parseHexByte(*dtcHex, 0)) {
+                                state.milOn = ((*b0 & 0x80) != 0);
+                                state.dtcCount = (*b0 & 0x7F);
+                            }
+                        }
+                        if (auto odoHex = extractHexPayload(elm.sendCommand("01A6", 700), "41A6")) {
+                            auto b0 = parseHexByte(*odoHex, 0);
+                            auto b1 = parseHexByte(*odoHex, 1);
+                            auto b2 = parseHexByte(*odoHex, 2);
+                            auto b3 = parseHexByte(*odoHex, 3);
+                            if (b0 && b1 && b2 && b3) {
+                                uint32_t rawOdo = (static_cast<uint32_t>(*b0) << 24) |
+                                                  (static_cast<uint32_t>(*b1) << 16) |
+                                                  (static_cast<uint32_t>(*b2) << 8) |
+                                                  static_cast<uint32_t>(*b3);
+                                state.odometerKm = rawOdo / 10.0;
+                            }
                         }
                     }
 
@@ -1080,6 +1228,24 @@ int main() {
                             }
                         } else if (auto b = parseHexByte(*tMaxHex, 0)) {
                             state.hvTempMaxC = *b - 40.0;
+                        }
+                    }
+
+                    if (state.hvTempMinC.has_value() && state.hvTempMaxC.has_value()) {
+                        state.hvTempSpreadC = *state.hvTempMaxC - *state.hvTempMinC;
+                    }
+
+                    // Query DQ400e 6-speed DSG Transmission Oil Temp (J743: TX 7E1, RX 7E9) every 6th cycle
+                    if ((cycleCount % 6) == 0) {
+                        elm.sendCommand("ATSH7E1", 500);
+                        elm.sendCommand("ATCRA7E9", 500);
+                        if (auto dsgHex = extractHexPayload(elm.sendCommand("22F405", 700), "62F405")) {
+                            if (auto b = parseHexByte(*dsgHex, 0)) {
+                                int tc = *b - 40;
+                                if (tc >= -30 && tc <= 160) {
+                                    state.dsgTempC = tc;
+                                }
+                            }
                         }
                     }
 
