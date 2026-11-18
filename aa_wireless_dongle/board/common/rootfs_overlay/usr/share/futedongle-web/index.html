@@ -536,6 +536,39 @@
       </div>
 
       <div class="card">
+        <h2>Kilometers Breakdown, Range &amp; Car GPS</h2>
+        <div class="grid">
+          <div class="metric">
+            <div class="label">Trip Electric vs Hybrid (km)</div>
+            <div class="value" id="gte-split-trip">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Lifetime Electric vs Hybrid (/persist)</div>
+            <div class="value" id="gte-split-life">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Est. Range (EV + Gasoline = Total)</div>
+            <div class="value" id="gte-total-range">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">km Since DTC Clear / km With MIL</div>
+            <div class="value" id="gte-dtc-km">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">Car GPS / Last Parked Position</div>
+            <div class="value" id="gte-gps">-</div>
+          </div>
+          <div class="metric">
+            <div class="label">GPS Actions</div>
+            <div class="value" style="margin-top:4px;">
+              <button type="button" class="btn secondary" style="padding:6px 10px;font-size:0.78rem;" onclick="pinCarGps()">Pin Phone GPS</button>
+              <a id="gte-map-link" class="btn" style="padding:6px 10px;font-size:0.78rem;display:none;" target="_blank" rel="noopener">Maps</a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
         <h2>Live Trip Computer &amp; 12V Electrical</h2>
         <div class="grid">
           <div class="metric">
@@ -899,9 +932,32 @@
           if (g.last_trip && g.last_trip.distance_km !== undefined) {
             const lt = g.last_trip;
             document.getElementById('gte-lasttrip').textContent =
-              lt.distance_km + ' km • ' + (lt.ev_ratio_pct ?? 100) + '% EV • -' + (lt.ev_kwh_used ?? 0) + ' kWh';
+              lt.distance_km + ' km (' + (lt.ev_km ?? 0) + ' EV / ' + (lt.ice_km ?? 0) + ' ICE) • ' + (lt.ev_ratio_pct ?? 100) + '% EV';
           } else {
             document.getElementById('gte-lasttrip').textContent = 'No saved trip yet';
+          }
+
+          document.getElementById('gte-split-trip').textContent =
+            'EV ' + (g.trip_ev_km ?? 0) + ' km • Hybrid ' + (g.trip_ice_km ?? 0) + ' km';
+          document.getElementById('gte-split-life').textContent =
+            'EV ' + (g.lifetime_ev_km ?? 0) + ' km • Hybrid ' + (g.lifetime_ice_km ?? 0) + ' km (Tot ' + (g.lifetime_total_km ?? 0) + ' km)';
+          const evR = (g.ev_range_est_km !== null && g.ev_range_est_km !== undefined) ? (g.ev_range_est_km + ' km EV') : '- EV';
+          const fuR = (g.fuel_range_est_km !== null && g.fuel_range_est_km !== undefined) ? (g.fuel_range_est_km + ' km Gas (' + (g.fuel_liters_rem ?? '-') + 'L)') : '- Gas';
+          const totR = (g.total_range_est_km !== null && g.total_range_est_km !== undefined) ? (' = ~' + g.total_range_est_km + ' km') : '';
+          document.getElementById('gte-total-range').textContent = evR + ' + ' + fuR + totR;
+          document.getElementById('gte-dtc-km').textContent =
+            'Clean ' + (g.km_since_dtc_clear ?? '-') + ' km • MIL ' + (g.km_with_mil_on ?? 0) + ' km';
+
+          const lat = g.gps_lat ?? (d.car_gps ? d.car_gps.lat : null);
+          const lon = g.gps_lon ?? (d.car_gps ? d.car_gps.lon : null);
+          const mapBtn = document.getElementById('gte-map-link');
+          if (lat !== null && lat !== undefined && lon !== null && lon !== undefined) {
+            document.getElementById('gte-gps').textContent = Number(lat).toFixed(5) + ', ' + Number(lon).toFixed(5);
+            mapBtn.href = 'https://maps.google.com/?q=' + encodeURIComponent(lat + ',' + lon);
+            mapBtn.style.display = 'inline-flex';
+          } else {
+            document.getElementById('gte-gps').textContent = 'Tap Pin Phone GPS';
+            mapBtn.style.display = 'none';
           }
         }
       } catch (e) {
@@ -916,6 +972,32 @@
       const show = el.type === 'password';
       el.type = show ? 'text' : 'password';
       btn.textContent = show ? 'Hide' : 'Show';
+    }
+
+    function pinCarGps() {
+      if (!navigator.geolocation) {
+        showToast('Browser Geolocation unavailable on HTTP');
+        return;
+      }
+      navigator.geolocation.getCurrentPosition(async pos => {
+        const body = 'lat=' + encodeURIComponent(pos.coords.latitude) +
+                     '&lon=' + encodeURIComponent(pos.coords.longitude) +
+                     '&acc=' + encodeURIComponent(pos.coords.accuracy || 0);
+        try {
+          const res = await fetch('/api/v1/gps', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body
+          });
+          const d = await res.json();
+          showToast(d.ok ? 'Saved car GPS location to /persist' : ('Error: ' + d.error));
+          fetchStatus();
+        } catch (e) {
+          showToast('Failed to save GPS position');
+        }
+      }, err => {
+        showToast('GPS note: Chrome requires HTTPS or flag for HTTP geolocation (' + err.message + ')');
+      }, { enableHighAccuracy: true, timeout: 6000 });
     }
 
     async function loadConfig() {

@@ -339,6 +339,15 @@ std::string buildStatusJson() {
         gteTelemetryRaw = "null";
     }
 
+    // Optional Car GPS / Last Parked Position JSON
+    std::string carGpsRaw = trim(readFileText("/run/car_gps.json", 4096));
+    if (carGpsRaw.empty() || carGpsRaw.front() != '{') {
+        carGpsRaw = trim(readFileText("/persist/last_parked_gps.json", 4096));
+    }
+    if (carGpsRaw.empty() || carGpsRaw.front() != '{') {
+        carGpsRaw = "null";
+    }
+
     char numBuf[64];
     std::ostringstream out;
     out << "{\"ok\":true,";
@@ -360,6 +369,7 @@ std::string buildStatusJson() {
     out << "\"garage_in_range\":" << (garageInRange ? "true" : "false") << ",";
     out << "\"garage_opened_once\":" << (garageOpenedOnce ? "true" : "false") << ",";
     out << "\"dhcp_leases\":" << leasesJson.str() << ",";
+    out << "\"car_gps\":" << carGpsRaw << ",";
     out << "\"gte_telemetry\":" << gteTelemetryRaw;
     out << "}";
     return out.str();
@@ -836,6 +846,33 @@ void handlePostConfig(int clientFd, const std::string& body) {
                      "{\"ok\":true,\"message\":\"Configuration saved to /boot/aawgd.conf\"}");
 }
 
+void handlePostGps(int clientFd, const std::string& body) {
+    auto params = parseQueryOrForm(body);
+    double lat = atof(params["lat"].c_str());
+    double lon = atof(params["lon"].c_str());
+    double acc = atof(params["acc"].c_str());
+    if (lat == 0.0 && lon == 0.0) {
+        sendJsonError(clientFd, "400 Bad Request", "Invalid GPS coordinates");
+        return;
+    }
+    char jsonBuf[256];
+    snprintf(jsonBuf, sizeof(jsonBuf),
+             "{\"lat\":%.6f,\"lon\":%.6f,\"acc_m\":%.0f}\n",
+             lat, lon, acc);
+    std::ofstream rf("/run/car_gps.json", std::ios::out | std::ios::trunc);
+    if (rf.is_open()) {
+        rf << jsonBuf;
+        rf.close();
+    }
+    std::ofstream pf("/persist/last_parked_gps.json", std::ios::out | std::ios::trunc);
+    if (pf.is_open()) {
+        pf << jsonBuf;
+        pf.close();
+    }
+    sendHttpResponse(clientFd, "200 OK", "application/json; charset=utf-8",
+                     "{\"ok\":true,\"message\":\"Saved car GPS coordinates\"}");
+}
+
 void handlePostActions(int clientFd, const std::string& body) {
     auto params = parseQueryOrForm(body);
     std::string action = params["action"];
@@ -946,6 +983,8 @@ void handleClientConnection(int clientFd) {
         handlePostConfig(clientFd, bodyPart);
     } else if (method == "POST" && path == "/api/v1/actions") {
         handlePostActions(clientFd, bodyPart);
+    } else if (method == "POST" && path == "/api/v1/gps") {
+        handlePostGps(clientFd, bodyPart);
     } else {
         sendJsonError(clientFd, "404 Not Found", "Endpoint not found");
     }

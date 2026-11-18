@@ -46,6 +46,8 @@ static constexpr const char* TELEMETRY_JSON_PATH = "/run/gte_telemetry.json";
 static constexpr const char* TELEMETRY_JSON_TMP = "/run/gte_telemetry.json.tmp";
 static constexpr const char* LAST_TRIP_JSON_PATH = "/persist/last_gte_trip.json";
 static constexpr const char* LAST_TRIP_JSON_TMP = "/persist/last_gte_trip.json.tmp";
+static constexpr const char* LIFETIME_STATS_PATH = "/persist/gte_lifetime.txt";
+static constexpr const char* LIFETIME_STATS_TMP = "/persist/gte_lifetime.txt.tmp";
 static constexpr const char* PERSIST_OBD_MAC_PATH = "/persist/obd_ble_mac";
 static constexpr const char* RUN_OBD_MAC_PATH = "/var/run/obd_ble_mac";
 static constexpr const char* GARAGE_IN_RANGE_FLAG = "/var/run/garage_in_range";
@@ -184,14 +186,23 @@ struct TelemetryState {
     std::optional<double> hvSohPct;
     std::optional<double> hvEnergyRemKwh;
     std::optional<int> evRangeEstKm;
+    std::optional<double> fuelLitersRem;
+    std::optional<int> fuelRangeEstKm;
+    std::optional<int> totalRangeEstKm;
     std::optional<double> aux12vV;
     std::optional<double> ecu12vV;
     std::optional<double> odometerKm;
+    std::optional<int> kmSinceDtcClear;
+    std::optional<int> kmWithMilOn;
+    std::optional<double> gpsLat;
+    std::optional<double> gpsLon;
     int dtcCount{0};
     bool milOn{false};
     std::string dtcCodes{"NONE"};
     std::string iceWarmupStatus{"COLD"};
     double tripDistanceKm{0.0};
+    double tripEvKm{0.0};
+    double tripIceKm{0.0};
     double tripEvRatioPct{100.0};
     double tripEvKwhUsed{0.0};
     double tripRegenKwh{0.0};
@@ -201,8 +212,35 @@ struct TelemetryState {
     int tripMaxSpeedKmh{0};
     int tripAvgSpeedKmh{0};
     int tripDurationSec{0};
+    double lifetimeTotalKm{0.0};
+    double lifetimeEvKm{0.0};
+    double lifetimeIceKm{0.0};
+    double lifetimeEvKwh{0.0};
+    double lifetimeRegenKwh{0.0};
     std::string lastTripJson{"null"};
 };
+
+void loadLifetimeStats(TelemetryState& st) {
+    std::ifstream f(LIFETIME_STATS_PATH);
+    if (!f.is_open()) {
+        return;
+    }
+    f >> st.lifetimeTotalKm >> st.lifetimeEvKm >> st.lifetimeIceKm >> st.lifetimeEvKwh >> st.lifetimeRegenKwh;
+}
+
+void saveLifetimeStats(const TelemetryState& st) {
+    std::ofstream f(LIFETIME_STATS_TMP, std::ios::out | std::ios::trunc);
+    if (f.is_open()) {
+        f << std::fixed << std::setprecision(3)
+          << st.lifetimeTotalKm << " "
+          << st.lifetimeEvKm << " "
+          << st.lifetimeIceKm << " "
+          << st.lifetimeEvKwh << " "
+          << st.lifetimeRegenKwh << "\n";
+        f.close();
+        rename(LIFETIME_STATS_TMP, LIFETIME_STATS_PATH);
+    }
+}
 
 void saveLastTripSummary(const TelemetryState& st) {
     if (st.tripDistanceKm < 0.05 && st.tripDurationSec < 30) {
@@ -213,6 +251,8 @@ void saveLastTripSummary(const TelemetryState& st) {
     out << "{"
         << "\"ended_utc\":\"" << currentUtcIso8601() << "\","
         << "\"distance_km\":" << std::setprecision(2) << st.tripDistanceKm << ","
+        << "\"ev_km\":" << std::setprecision(2) << st.tripEvKm << ","
+        << "\"ice_km\":" << std::setprecision(2) << st.tripIceKm << ","
         << "\"duration_sec\":" << st.tripDurationSec << ","
         << "\"ev_ratio_pct\":" << std::setprecision(1) << st.tripEvRatioPct << ","
         << "\"ev_kwh_used\":" << std::setprecision(2) << st.tripEvKwhUsed << ","
@@ -259,6 +299,8 @@ void writeTelemetrySnapshot(const TelemetryState& st) {
     out << "  \"dtc_codes\": \"" << jsonEscape(st.dtcCodes) << "\",\n";
     out << "  \"ice_warmup_status\": \"" << jsonEscape(st.iceWarmupStatus) << "\",\n";
     out << "  \"trip_distance_km\": " << std::setprecision(2) << st.tripDistanceKm << ",\n";
+    out << "  \"trip_ev_km\": " << std::setprecision(2) << st.tripEvKm << ",\n";
+    out << "  \"trip_ice_km\": " << std::setprecision(2) << st.tripIceKm << ",\n";
     out << "  \"trip_ev_ratio_pct\": " << std::setprecision(1) << st.tripEvRatioPct << ",\n";
     out << "  \"trip_ev_kwh_used\": " << std::setprecision(2) << st.tripEvKwhUsed << ",\n";
     out << "  \"trip_regen_kwh\": " << std::setprecision(2) << st.tripRegenKwh << ",\n";
@@ -267,6 +309,11 @@ void writeTelemetrySnapshot(const TelemetryState& st) {
     out << "  \"trip_max_speed_kmh\": " << st.tripMaxSpeedKmh << ",\n";
     out << "  \"trip_avg_speed_kmh\": " << st.tripAvgSpeedKmh << ",\n";
     out << "  \"trip_duration_sec\": " << st.tripDurationSec << ",\n";
+    out << "  \"lifetime_total_km\": " << std::setprecision(1) << st.lifetimeTotalKm << ",\n";
+    out << "  \"lifetime_ev_km\": " << std::setprecision(1) << st.lifetimeEvKm << ",\n";
+    out << "  \"lifetime_ice_km\": " << std::setprecision(1) << st.lifetimeIceKm << ",\n";
+    out << "  \"lifetime_ev_kwh\": " << std::setprecision(1) << st.lifetimeEvKwh << ",\n";
+    out << "  \"lifetime_regen_kwh\": " << std::setprecision(1) << st.lifetimeRegenKwh << ",\n";
 
     auto writeOptInt = [&](const char* key, const std::optional<int>& val) {
         out << "  \"" << key << "\": ";
@@ -295,10 +342,15 @@ void writeTelemetrySnapshot(const TelemetryState& st) {
     writeOptInt("dsg_temp_c", st.dsgTempC);
     writeOptInt("hv_cell_delta_mv", st.hvCellDeltaMv);
     writeOptInt("ev_range_est_km", st.evRangeEstKm);
+    writeOptInt("fuel_range_est_km", st.fuelRangeEstKm);
+    writeOptInt("total_range_est_km", st.totalRangeEstKm);
+    writeOptInt("km_since_dtc_clear", st.kmSinceDtcClear);
+    writeOptInt("km_with_mil_on", st.kmWithMilOn);
     writeOptDouble("ice_load_pct", st.iceLoadPct, 1);
     writeOptDouble("throttle_pct", st.throttlePct, 1);
     writeOptDouble("turbo_boost_bar", st.turboBoostBar, 2);
     writeOptDouble("fuel_level_pct", st.fuelLevelPct, 1);
+    writeOptDouble("fuel_liters_rem", st.fuelLitersRem, 1);
     writeOptDouble("fuel_rate_lph", st.fuelRateLph, 2);
     writeOptDouble("fuel_l100km", st.fuelL100km, 1);
     writeOptDouble("hv_soc_display_pct", st.hvSocDisplayPct, 1);
@@ -316,6 +368,8 @@ void writeTelemetrySnapshot(const TelemetryState& st) {
     writeOptDouble("trip_ev_kwh_100km", st.tripEvKwh100km, 1);
     writeOptDouble("ecu_12v_v", st.ecu12vV, 2);
     writeOptDouble("odometer_km", st.odometerKm, 1);
+    writeOptDouble("gps_lat", st.gpsLat, 6);
+    writeOptDouble("gps_lon", st.gpsLon, 6);
     writeOptDouble("aux_12v_v", st.aux12vV, 2);
     out << "  \"last_trip\": " << (st.lastTripJson.empty() ? "null" : st.lastTripJson) << "\n";
     out << "}\n";
@@ -862,6 +916,7 @@ int main() {
 
     TelemetryState state;
     state.adapterMac = getConfiguredObdMac();
+    loadLifetimeStats(state);
     std::string savedLastTrip = readFirstLine(LAST_TRIP_JSON_PATH);
     if (!savedLastTrip.empty() && savedLastTrip.front() == '{') {
         state.lastTripJson = savedLastTrip;
@@ -1196,14 +1251,27 @@ int main() {
                     }
                 }
 
-                // Integrate trip distance, EV driving ratio, and electric energy
+                // Integrate trip & lifetime distance (split by Electric E-Mode vs Hybrid ICE) and energy
                 if (dtHours > 0.0 && dtHours < 0.02) {
-                    state.tripDistanceKm += state.speedKmh * dtHours;
+                    double dKm = state.speedKmh * dtHours;
+                    state.tripDistanceKm += dKm;
+                    state.lifetimeTotalKm += dKm;
+                    if (state.iceRpm == 0) {
+                        state.tripEvKm += dKm;
+                        state.lifetimeEvKm += dKm;
+                    } else {
+                        state.tripIceKm += dKm;
+                        state.lifetimeIceKm += dKm;
+                    }
                     if (state.hvPowerKw.has_value()) {
                         if (*state.hvPowerKw < 0.0) {
-                            state.tripEvKwhUsed += (-*state.hvPowerKw) * dtHours;
+                            double dKwh = (-*state.hvPowerKw) * dtHours;
+                            state.tripEvKwhUsed += dKwh;
+                            state.lifetimeEvKwh += dKwh;
                         } else {
-                            state.tripRegenKwh += (*state.hvPowerKw) * dtHours;
+                            double dRegen = (*state.hvPowerKw) * dtHours;
+                            state.tripRegenKwh += dRegen;
+                            state.lifetimeRegenKwh += dRegen;
                         }
                     }
                 }
@@ -1211,19 +1279,23 @@ int main() {
                     state.tripAvgSpeedKmh = static_cast<int>(
                         std::round((state.tripDistanceKm * 3600.0) / state.tripDurationSec));
                 }
-                if (state.tripDistanceKm >= 0.25) {
+                if (state.tripDistanceKm >= 0.05) {
+                    state.tripEvRatioPct = (state.tripEvKm * 100.0) / state.tripDistanceKm;
+                } else {
+                    ++totalActiveSamples;
+                    if (state.iceRpm == 0) {
+                        ++evSamples;
+                    }
+                    if (totalActiveSamples > 0) {
+                        state.tripEvRatioPct = (static_cast<double>(evSamples) * 100.0) / static_cast<double>(totalActiveSamples);
+                    }
+                }
+                if (state.tripEvKm >= 0.20) {
                     double netKwh = std::max(0.0, state.tripEvKwhUsed - state.tripRegenKwh);
-                    state.tripEvKwh100km = (netKwh * 100.0) / state.tripDistanceKm;
-                }
-                ++totalActiveSamples;
-                if (state.iceRpm == 0) {
-                    ++evSamples;
-                }
-                if (totalActiveSamples > 0) {
-                    state.tripEvRatioPct = (static_cast<double>(evSamples) * 100.0) / static_cast<double>(totalActiveSamples);
+                    state.tripEvKwh100km = (netKwh * 100.0) / state.tripEvKm;
                 }
 
-                // Estimate remaining usable HV energy (kWh) and EV range (km)
+                // Estimate remaining usable HV energy (kWh) and EV / Gasoline / Total range (km)
                 if (state.hvSocDisplayPct.has_value()) {
                     double usablePackKwh = 10.4 * (state.hvSohPct.value_or(94.0) / 100.0);
                     state.hvEnergyRemKwh = usablePackKwh * (*state.hvSocDisplayPct / 100.0);
@@ -1232,6 +1304,12 @@ int main() {
                         refKwh100km = 18.5;
                     }
                     state.evRangeEstKm = static_cast<int>(std::round((*state.hvEnergyRemKwh * 100.0) / refKwh100km));
+                }
+                if (state.fuelLevelPct.has_value()) {
+                    // Passat B8 GTE fuel tank is 50.0 liters
+                    state.fuelLitersRem = 50.0 * (*state.fuelLevelPct / 100.0);
+                    state.fuelRangeEstKm = static_cast<int>(std::round((*state.fuelLitersRem * 100.0) / 6.2));
+                    state.totalRangeEstKm = state.fuelRangeEstKm.value_or(0) + state.evRangeEstKm.value_or(0);
                 }
 
                 // Medium loop (every 3rd active cycle): Thermal, Fuel & MQB GTE HV BMC (7E5) UDS PIDs
@@ -1305,7 +1383,37 @@ int main() {
                                 state.odometerKm = rawOdo / 10.0;
                             }
                         }
+                        // Poll Distance since DTC clear (0131) and Distance with MIL on (0121)
+                        if (auto clrHex = extractHexPayload(elm.sendCommand("0131", 600), "4131")) {
+                            if (auto w = parseHexWordU16(*clrHex, 0)) {
+                                state.kmSinceDtcClear = *w;
+                            }
+                        }
+                        if (auto milKmHex = extractHexPayload(elm.sendCommand("0121", 600), "4121")) {
+                            if (auto w = parseHexWordU16(*milKmHex, 0)) {
+                                state.kmWithMilOn = *w;
+                            }
+                        }
+                        // Fallback odometer read from VW MQB Instrument Cluster 17 (TX 714, RX 77E, DID 2203)
+                        if (!state.odometerKm.has_value()) {
+                            elm.sendCommand("ATSH714", 500);
+                            elm.sendCommand("ATCRA77E", 500);
+                            if (auto clOdoHex = extractHexPayload(elm.sendCommand("222203", 700), "622203")) {
+                                auto b0 = parseHexByte(*clOdoHex, 0);
+                                auto b1 = parseHexByte(*clOdoHex, 1);
+                                auto b2 = parseHexByte(*clOdoHex, 2);
+                                if (b0 && b1 && b2) {
+                                    uint32_t km = (static_cast<uint32_t>(*b0) << 16) |
+                                                  (static_cast<uint32_t>(*b1) << 8) |
+                                                  static_cast<uint32_t>(*b2);
+                                    if (km > 0 && km < 1500000) {
+                                        state.odometerKm = static_cast<double>(km);
+                                    }
+                                }
+                            }
+                        }
                         saveLastTripSummary(state);
+                        saveLifetimeStats(state);
                     }
 
                     // Query Passat GTE Hybrid Battery Management (J840 / BMC: TX 7E5, RX 7ED)
@@ -1467,6 +1575,7 @@ int main() {
                     if (consecutiveNoDataAfterRun >= 3) {
                         Logger::instance()->info("OBD Telemetry: Ignition OFF after drive; saving trip summary and entering low-power standby\n");
                         saveLastTripSummary(state);
+                        saveLifetimeStats(state);
                         std::string saved = readFirstLine(LAST_TRIP_JSON_PATH);
                         if (!saved.empty() && saved.front() == '{') {
                             state.lastTripJson = saved;
