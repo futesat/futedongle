@@ -1,84 +1,265 @@
-# Wireless Android Auto Dongle
+# FuteDongle — Wireless Android Auto Dongle, Smart Garage Opener & VW MQB / Passat GTE Live Telemetry
 
-DIY Wireless Android Auto adapter to use with a car that supports only wired Android Auto using a Raspberry Pi.
+DIY Wireless Android Auto adapter built on Buildroot and Raspberry Pi (optimized for **Raspberry Pi 4 Model B** and **2020 VW Passat B8 GTE MIB3**), featuring:
 
-This repository consists of the buildroot setup to generate an sd card image to create your own Wireless Android Auto adapter.
+1. **Native 5 GHz Wireless Android Auto Proxy (`aawgd`)** — Zero-modification AAP/GAL passthrough over 5 GHz Wi-Fi (`Channel 36`) and Linux USB Gadget (`f_accessory`), with no extra phone app required.
+2. **Smart Two-Stage Garage Door Opener (`S38garage_opener`)** — Probes garage Wi-Fi availability at boot without false-triggering when unlocking the car door (`Klemme 30G`), and fires high-priority UDP trigger bursts the instant the **Car `START` button (`Klemme 15` / `READY`)** is pressed (`obd_start`) or when Android Auto projects foreground video (`aa_video`).
+3. **Live VW MQB & Passat B8 GTE OBD-II / UDS Telemetry (`gte_telemetryd`)** — Persistent Bluetooth 5.2 BLE GATT client (`Vgate iCar Pro 2S` / `IOS-Vlink`) that polls standard OBD-II PIDs and Volkswagen MQB UDS modules (`7E0`, `7E1`, `7E4`, `7E5`, `710`, `714`) in real time while Android Auto runs concurrently.
+4. **Local Web Control & Telemetry Portal (`http://10.0.0.1`)** — Mobile-first dashboard accessible from any browser on the `futedongle` Wi-Fi network with live **Status**, **Car (GTE Telemetry)**, **Logs**, and **Settings** tabs.
 
-## Features
-- Native Wireless Android Auto connection to the phone, no extra app needed on the phone.
-- Passes through all Android Auto traffic without any modifications to ensure seamless and safe experience.
-- Fast bootup, connection under 30 seconds.
-- Supports multiple boards (Currently multiple Raspberry Pi boards).
+---
 
-## Supported Hardware
-This is currently tested and built for the following Raspberry Pi boards supporting USB OTG.
-- **Raspberry Pi Zero W**
-- **Raspberry Pi Zero 2 W**
-- **Raspberry Pi 3 A+** _(Raspberry Pi 3 B+ is not supported due to lack of USB OTG support.)_
-- **Raspberry Pi 4**
+## Table of Contents
 
-In theory, this can be extended to more hardware in future with these basic requirements.
+- [Key Features](#key-features)
+- [System Architecture & Boot Sequence](#system-architecture--boot-sequence)
+- [Smart Garage Door Opener (`S38garage_opener`)](#smart-garage-door-opener-s38garage_opener)
+- [VW MQB & Passat B8 GTE Live Telemetry (`gte_telemetryd`)](#vw-mqb--passat-b8-gte-live-telemetry-gte_telemetryd)
+- [Local Web Control Portal & REST API (`http://10.0.0.1`)](#local-web-control-portal--rest-api-http10001)
+- [Configuration Reference (`/etc/aawgd.conf`)](#configuration-reference-etcaawgdconf)
+- [Supported Hardware & Installation](#supported-hardware--installation)
+- [Troubleshooting](#troubleshooting)
 
-- The board should support USB OTG or Gadget mode.
-- Has Wifi and Bluetooth. External should also work if not in-built.
-- Should be able to operate on power provided by the car.
+---
 
-## Install and run
-[Download a pre-built sd card image](https://github.com/nisargjhaveri/WirelessAndroidAutoDongle/releases) for your board. You can also [build one yourself](BUILDING.md). Install the image on the SD card using your favorite tool.
+## Key Features
 
-You may want to update the country code and other settings that works best for you. See [Configurations](#Configurations)
+- **Seamless Wireless Android Auto**:
+  - Automatic Bluetooth RFCOMM handshake (`WifiStartRequest` -> `WifiInfoResponse` -> `WifiConnectStatus`) followed by low-latency 5 GHz Wi-Fi TCP socket proxy to the car's USB headunit (`AOAP` / `f_accessory`).
+  - Hardened Linux 6.6 / BlueZ 5.79 Bluetooth initialization (`BCM4345C0.hcd` patch sync, `rfkill` unblock guard, MGMT key/UUID ordering, and bounded USB `ENODEV`/`EAGAIN` retry).
+- **Zero-Interference Dual-Bluetooth Architecture**:
+  - `aawgd` uses Classic Bluetooth (BR/EDR RFCOMM) only during initial phone discovery and switches `hci0` to `setPairable(false)` while keeping the controller powered on after Wi-Fi handoff.
+  - `gte_telemetryd` uses **Bluetooth Low Energy (BLE 5.2 GATT)** via `IOS-Vlink` (Service `0x18F0`, Write RX `0x2AF1`, Notify TX `0x2AF0`), requiring no Classic PIN pairing and avoiding RFCOMM contention.
+  - `aawgd` automatically filters out Vgate/OBD adapters (`IOS-Vlink`, `Android-Vlink`, `Vgate`, `OBD`) during phone Bluetooth paging and pauses paging whenever `/var/run/garage_firing` is active.
+- **Persistent Partition (`/persist`)**:
+  - Stores paired Bluetooth link keys, live web portal overrides (`/persist/aawgd.conf`), and cumulative Electric (`E-Mode`) vs Hybrid (`1.4 TSI`) lifetime kilometer counters (`/persist/gte_lifetime.txt`) across reboots and read-only rootfs mounts.
 
-### First-time connection
-- Connect the phone to headunit via USB cable, make sure Android Auto starts. Disconnect phone.
-- Connect the board to the car. Make sure to use a data cable, with the USB OTG enabled port on the board.
-    - On **Raspberry Pi Zero W** and **Raspberry Pi Zero 2 W**: Use the second micro-usb port marked "USB" and not "PWR".
-    - On **Raspberry Pi 3 A+**: Use the only USB-A port with an USB-A to USB-A cable.
-    - On **Raspberry Pi 4**, use the USB-C port used for normally powering the board.
-- Open Bluetooth settings and pair the new device called `AndroidAuto-Dongle-*` or `WirelessAADongle-*` on your phone.
-- After this phone should automatically connect via Wifi and the dongle will connect to the headunit via USB and start Android Auto on the car screen.
+---
 
-### Subsequent connections
-From the next time, it should automatically connect to the phone and start Android Auto.
+## System Architecture & Boot Sequence
 
-Make sure your Bluetooth and Wifi are enabled on the phone.
+```mermaid
+flowchart TD
+    Boot["Boot (Klemme 30G USB 5V Power)"] --> S38["S38garage_opener probe (2.4 GHz Garage Wi-Fi Check)"]
+    S38 -->|Caches BSSID, Freq, IP & ARP in /var/run/garage_in_range| S39["S39hostapd_conf & S40network (5 GHz AP 10.0.0.1/24)"]
+    S39 --> S41["S41bluetooth & S80dnsmasq (no-ping instant DHCP)"]
+    S41 --> S93["S93aawgd (Wireless Android Auto Proxy + Web Portal :80)"]
+    S41 --> S94["S94gte_telemetry (BLE Vgate iCar Pro 2S Daemon)"]
+    S94 -->|Polls 010C + ATRV every 350ms| StartCheck{"Car START Pressed? (Klemme 15 / READY)"}
+    StartCheck -->|Yes & /var/run/garage_in_range exists| Fire["S38garage_opener fire (DSCP EF UDP Burst -> Restore 5 GHz AP)"]
+    S94 -->|Writes atomic JSON every 1.2s| TelemetryJSON["/var/run/gte_telemetry.json"]
+    TelemetryJSON --> WebPortal["http://10.0.0.1 (Status & Car Tabs)"]
+```
 
-## Configurations
+### Init Script Pipeline (`/etc/init.d/`)
 
-Once the image is installed on the SD card, you can see the SD card as `WirelessAA` drive.
+| Order | Init Script / Binary | Responsibility |
+| :--- | :--- | :--- |
+| `S38` | `S38garage_opener` (`/usr/bin/garage_udp_send`) | Probes garage Wi-Fi availability at boot (`probe` mode) or executes immediate UDP opening (`boot` mode). Called with `fire` when the active trigger fires. |
+| `S39` | `S39hostapd_conf` | Generates `/var/run/hostapd.conf` for the 5 GHz (`hw_mode=a`, `channel=36`, `HT40+`) or 2.4 GHz Android Auto access point. |
+| `S40` | `S40network` | Brings up `lo` and `wlan0` (`10.0.0.1/24`) and launches `hostapd`. |
+| `S41` | `S41bluetooth` | Loads Broadcom `hci_uart` firmware (`BCM4345C0.hcd`), brings `hci0` UP synchronously, and starts `bluetoothd`. |
+| `S80` | `S80dnsmasq` | Runs `dnsmasq` with `no-ping` for sub-100ms `DHCPOFFER` leases (`10.0.0.10` – `10.0.0.50`) and captive DNS aliases (`futedongle.local`, `dongle.local`). |
+| `S93` | `S93aawgd` (`/usr/bin/aawgd`) | Supervises the core Android Auto Wireless C++ daemon and embedded HTTP Web Portal (`0.0.0.0:80`). |
+| `S94` | `S94gte_telemetry` (`/usr/bin/gte_telemetryd`) | Supervises the BLE OBD-II & VW MQB UDS telemetry daemon and Car-`START` garage trigger monitor. |
 
-Edit the `aawgd.conf` file inside the `WirelessAA` drive using a text editor to update the configurations. The file contains the possible configuration options with their explanations.
+---
 
+## Smart Garage Door Opener (`S38garage_opener`)
 
-## Troubleshoot
+On Volkswagen MQB vehicles (such as the Passat B8 GTE), unlocking the car with the keyfob energizes the USB data port (`Klemme 30G`) **before** the driver enters the cabin or starts the car. Opening the garage door immediately at boot would trigger the door every time the user merely unlocks the car to grab something from the cabin.
 
-### Common issues
+FuteDongle solves this with a **two-stage architecture** and selectable `AAWG_GARAGE_TRIGGER_MODE`:
 
-#### Bluetooth and Wifi seems connected, but the phone stuck at "Looking for Android Auto"
-The most common issue behind this is either bad USB cable or use of wrong USB port on the device. Make sure:
-1. The cable is good quality data cable and not power-only cable
-2. You're using the OTG enabled usb port on the board, and not the power-only port.
+### 1. Stage 1 — Boot Probe (`S38garage_opener probe`)
+- Temporarily associates `wlan0` to `AAWG_GARAGE_WIFI_SSID` (supporting hidden 2.4 GHz or 5 GHz networks via `scan_ssid=1` and BSSID/frequency lock).
+- Verifies WPA2 4-way EAPOL key installation (`CTRL-EVENT-CONNECTED`), acquires a lease (or applies deterministic static fallback IP + gateway ARP priming), and saves the discovered `GARAGE_BSSID`, `GARAGE_FREQ`, `GARAGE_LOCAL_IP`, `GARAGE_GW_IP`, and `GARAGE_GW_MAC` into `/var/run/garage_in_range`.
+- Immediately tears down client mode and starts the 5 GHz `futedongle` Access Point so the driver's phone can connect without delay.
 
-#### "Device not responding" error on headunit
-Make sure that "Wireless Android Auto" is enabled in your phone's Andriod Auto settings. This option is only available and required on some older phones.
+### 2. Stage 2 — Trigger Execution (`S38garage_opener fire`)
 
-### Getting logs
-Once you've already tried multiple times and it still does not work, you can ssh into the device and try to get some logs.
+Controlled by `AAWG_GARAGE_TRIGGER_MODE`:
 
-- Set a static password by setting the `AAWG_WIFI_PASSWORD` config, and enable SSH by setting the `AAWG_ENABLE_SSH` config. See [the instructions to update the configurations](#Configurations).
-- Connect the device to the headunit, let it boot and try to connect once. The logs are not persisted across reboots, so you need to get the logs in the same instance soon after you observe the issue.
-- Connect to the device using wifi (SSID: AAWirelessDongle, Password: \<as set in the first step>).
-- SSH into the device (username: root, password: password, see relevant defconfigs e.g. [raspberrypi0w_defconfig](aa_wireless_dongle/configs/raspberrypi0w_defconfig)).
-- Once you're in, try to have a look at `/var/log/messages` file, it should have most relevant logs to start with. You can also copy the file and attach to issues you create if any.
+| Mode | Trigger Condition | How It Works |
+| :--- | :--- | :--- |
+| **`obd_start`** *(Default)* | **Car `START` button (`Klemme 15` / `READY`)** | `gte_telemetryd` connects via BLE to the Vgate iCar Pro 2S. While the car is only unlocked (`Klemme 30G`), Terminal 15 is OFF (`010C` returns `NO DATA` and `ATRV` is at resting `~12.2V`). The moment the driver presses `START` (even in 100% electric `E-Mode` with `0 RPM`), Terminal 15 wakes the CAN gateway (`010C` returns `410Cxxxx` or `ATRV >= 13.5V` from the HV DC-DC converter) and `gte_telemetryd` immediately invokes `/etc/init.d/S38garage_opener fire`. |
+| **`aa_video`** | **Android Auto Foreground Video** | `AAWProxy` inspects the 4-byte AAP frame headers in cleartext, locks onto the video channel when an H.264 IDR keyframe arrives (`len > 4200`), and fires `S38garage_opener fire` once 12 subsequent H.264 P-frames confirm active projection on the car screen. |
+| **`boot`** | **Immediate on USB Power** | Sends the UDP burst directly during `S38garage_opener start` as soon as the USB port receives 5V power. |
 
-## Contribute
-[Find or create a new issue](https://github.com/nisargjhaveri/WirelessAndroidAutoDongle/issues) for any bugs or improvements.
+When `fire` runs:
+1. Creates `/var/run/garage_firing` so `aawgd` and `gte_telemetryd` pause Bluetooth/BLE activity on the shared `CYW43455` radio.
+2. Reconnects `wlan0` directly to the cached `GARAGE_FREQ` and `GARAGE_BSSID` from Stage 1, restores the cached IP and kernel neighbor ARP entry (`nud permanent`), and sends 4 bursts of DSCP `EF` (`TOS 0xb8`, `SO_PRIORITY=6`, WMM `AC_VO`) UDP datagrams via `/usr/bin/garage_udp_send`.
+3. Restores the 5 GHz `hostapd` AP and `dnsmasq` cleanly so Android Auto reconnects automatically.
 
-Feel free to [Create a PR](https://github.com/nisargjhaveri/WirelessAndroidAutoDongle/pulls) to fix any issues. Refer [BUILDING.md](BUILDING.md) for instructions on how to build locally.
+---
 
-## Support 
-Please [consider sponsoring](https://github.com/sponsors/nisargjhaveri) if you find the project useful. Even a small donation helps. This will help continuing fixing issues and getting support for more devices and headunit in future.
+## VW MQB & Passat B8 GTE Live Telemetry (`gte_telemetryd`)
 
-In any case, don't forget to star on github and spread the word if you think this project might be useful to someone else as well.
+`/usr/bin/gte_telemetryd` ([`obdTelemetry.cpp`](aa_wireless_dongle/package/aawg/src/obdTelemetry.cpp)) connects over Bluetooth 5.2 BLE GATT to the **Vgate iCar Pro 2S** (`IOS-Vlink`) and writes atomic JSON snapshots to `/var/run/gte_telemetry.json`, served by `GET /api/v1/status` and rendered live in the **Car** and **Status** tabs of `http://10.0.0.1`.
 
-## Limitations
-This is currently tested with very limited set of headunits and cars. Let me know if it does not work with your headunit.
+### Why `IOS-Vlink`?
+The Vgate iCar Pro 2S is a dual-mode Bluetooth 5.2 adapter that simultaneously advertises:
+- `Android-Vlink`: Classic Bluetooth SPP (BR/EDR), requiring a legacy PIN (`1234`) and competing with Android Auto's Classic Bluetooth RFCOMM channel.
+- `IOS-Vlink`: Standard **Bluetooth Low Energy (BLE 5.2 GATT)** (Service `0x18F0`, Write RX `0x2AF1`, Notify TX `0x2AF0`), which works natively with Linux BlueZ `gatttool` without PIN prompts or Classic Bluetooth interference.
+
+### Polled ECUs, OBD-II Modes & VW MQB UDS PIDs
+
+#### 1. Hybrid Drive Mode & HV Traction Battery (`8C` Hybrid BMS — `ATSH 7E5` / `ATCRA 7ED`)
+
+| Metric | JSON Key | OBD / UDS PID | Formula / Details |
+| :--- | :--- | :--- | :--- |
+| **GTE Drive Mode** | `drive_mode` | Derived (`010C`, `010D`, `hv_kw`) | `E-Mode (100% Electric)`, `GTE Boost (TSI + Electric)`, `Hybrid (1.4 TSI + Assist)`, `Hybrid + Battery Charge`, `Regen Braking (Charge)`, `Ready (Standby)`, `Ignition On (Terminal 15)` |
+| **HV Battery SoC** | `hv_soc_pct` | Mode `01` `015B` / UDS `22028C` | $\frac{100 \times A}{255}$ (`%` usable / physical SoC) |
+| **HV Pack Voltage** | `hv_voltage_v` | UDS `221E3B` | $(256A + B) / 100.0\text{ V}$ (or `/ 10.0` depending on BMS firmware scaling) |
+| **HV Pack Current** | `hv_current_a` | UDS `221E3D` | Signed 16-bit $(256A + B) / 10.0\text{ A}$ (positive = discharge, negative = regen/charge) |
+| **HV Electric Power** | `hv_power_kw` | Derived (`V * A / 1000`) | Real-time traction/regen power in `kW` |
+| **HV Battery Temp** | `hv_battery_temp_c` | UDS `222A0B` | $(A - 40)\text{ }^\circ\text{C}$ (9.9 / 13.0 kWh pack temperature) |
+| **96s Cell Voltage Min / Max** | `hv_cell_min_v`, `hv_cell_max_v` | UDS `221E33`, `221E34` | $(256A + B) / 1000.0\text{ V}$ (`1.0 V` – `4.5 V` per cell) |
+| **Cell Imbalance ($\Delta\text{mV}$)** | `hv_cell_delta_mv` | Derived | $(\text{Cell}_{\max} - \text{Cell}_{\min}) \times 1000\text{ mV}$ (`< 20 mV` balanced, `> 50 mV` imbalance alert) |
+| **HV Battery SOH** | `hv_soh_pct` | UDS `221E32` | State of Health (`%`) of the lithium-ion traction pack |
+
+#### 2. Electric Drive Module `51` (`J841` — `ATSH 7E4` / `ATCRA 7EC`) & System Output
+
+| Metric | JSON Key | OBD / UDS PID | Formula / Details |
+| :--- | :--- | :--- | :--- |
+| **Inverter Temperature** | `inverter_temp_c` | UDS `221E12` | Power electronics inverter temperature in `°C` |
+| **E-Machine (`HEM80`) RPM** | `emotor_rpm` | UDS `221E10` / K0 clutch sync | Electric traction motor speed (`RPM`) |
+| **Combined GTE Output** | `system_total_cv`, `system_total_kw` | Derived (`hv_power_kw` + TSI load/RPM) | Combined hybrid power up to **218 CV (160 kW)** in *GTE Boost* |
+
+#### 3. 1.4 TSI EA211 GDI Turbo Engine (`01` Engine ECM — `7DF` / `ATSH 7E0` -> `7E8`)
+
+| Metric | JSON Key | OBD / UDS PID | Formula / Details |
+| :--- | :--- | :--- | :--- |
+| **Engine RPM** | `rpm` | Mode `01` `010C` | $(256A + B) / 4\text{ RPM}$ (`0 RPM` in `E-Mode`) |
+| **Vehicle Speed** | `speed_kmh` | Mode `01` `010D` | $A\text{ km/h}$ |
+| **Coolant Temperature** | `coolant_c` | Mode `01` `0105` | $(A - 40)\text{ }^\circ\text{C}$ |
+| **Engine Oil Temperature** | `oil_c` | Mode `01` `015C` | $(A - 40)\text{ }^\circ\text{C}$ |
+| **Cold-Engine Thermal Guard** | UI Warning Badge | Derived (`rpm > 0` & temp `< 70 °C`) | Alerts `COLD TSI (<70°C) — Avoid Kickdown` when the 1.4 TSI starts cold during hybrid kickdown |
+| **Engine Load** | `engine_load_pct` | Mode `01` `0104` | $\frac{100 \times A}{255}\text{ \%}$ |
+| **Turbo Boost Pressure** | `boost_bar`, `map_kpa`, `baro_kpa` | Mode `01` `010B`, `0133` | Relative boost $(\text{MAP} - \text{Baro}) / 100.0\text{ bar}$ |
+| **Intake Air Temp (IAT)** | `intake_c` | Mode `01` `010F` | $(A - 40)\text{ }^\circ\text{C}$ (charge-air cooler efficiency) |
+| **Throttle Position** | `throttle_pct` | Mode `01` `0111` | $\frac{100 \times A}{255}\text{ \%}$ |
+| **GDI Fuel Rail Pressure** | `rail_pressure_bar` | Mode `01` `0123` | $(256A + B) \times 0.1\text{ bar}$ (`40 bar` idle up to `200 bar` full load) |
+| **Ignition Spark Advance** | `timing_advance_deg` | Mode `01` `010E` | $(A / 2.0) - 64.0\text{ }^\circ\text{BTDC}$ |
+| **Fuel Trims (STFT / LTFT)** | `stft_pct`, `ltft_pct` | Mode `01` `0106`, `0107` | $(A - 128) \times \frac{100}{128}\text{ \%}$ (Bank 1 short-term and long-term mixture adaptation) |
+| **Catalyst Bank 1 Temp** | `cat_temp_c` | Mode `01` `013C` | $((256A + B) / 10.0) - 40.0\text{ }^\circ\text{C}$ |
+| **Instant Fuel Rate** | `fuel_rate_lh`, `fuel_l100km` | Mode `01` `015E` | $(256A + B) / 20.0\text{ L/h}$ and live $\text{L/100 km}$ while moving |
+| **ICE Runtime Since Start** | `ice_runtime_sec` | Mode `01` `011F` | $256A + B\text{ seconds}$ of thermal engine operation |
+
+#### 4. DQ400e 6-Speed DSG Transmission (`02` TCM — `ATSH 7E1` / `ATCRA 7E9`)
+
+| Metric | JSON Key | OBD / UDS PID | Formula / Details |
+| :--- | :--- | :--- | :--- |
+| **DSG Oil Temperature** | `dsg_temp_c` | UDS `22F405` | $(A - 40)\text{ }^\circ\text{C}$ (wet dual-clutch & mechatronic fluid temperature) |
+| **Active Gear Estimate** | `dsg_gear` | Derived (`speed_kmh`, `emotor_rpm`, `rpm`) | Estimates active DQ400e gear (`P/N`, `D1` .. `D6`) from shaft speed ratios |
+
+#### 5. Electric vs Hybrid Kilometer Split, Odometer & Range (`17` Cluster — `ATSH 714` / `ATCRA 77E`)
+
+| Metric | JSON Key | Source / PID | Details |
+| :--- | :--- | :--- | :--- |
+| **Trip Electric vs Hybrid km** | `trip_ev_km`, `trip_ice_km`, `trip_total_km`, `trip_ev_pct` | Time-integrated $v(t)\,\Delta t$ | Integrates distance traveled with `rpm == 0` (`E-Mode`) vs `rpm > 0` (`1.4 TSI`) and computes Zero-Emission `%` |
+| **Lifetime Electric vs Hybrid km** | `lifetime_ev_km`, `lifetime_ice_km`, `lifetime_total_km`, `lifetime_ev_pct` | `/persist/gte_lifetime.txt` | Persisted to flash every `0.25 km` and when the car turns off (`Klemme 15` OFF) |
+| **Vehicle Odometer** | `odometer_km` | Mode `01` `01A6` / UDS `714` `222203` | Standard OBD `01A6` ($0.1\text{ km}$ resolution) with automatic fallback to Instrument Cluster `17` UDS `222203` |
+| **Distance Since DTC Cleared** | `km_since_dtc_clear` | Mode `01` `0131` | $256A + B\text{ km}$ since fault codes were last reset |
+| **Distance With MIL On** | `km_with_mil_on` | Mode `01` `0121` | $256A + B\text{ km}$ driven with Check Engine light active |
+| **EV Range / Fuel Range / Total Range** | `ev_range_km`, `fuel_range_km`, `total_range_km` | Derived (`hv_soc_pct`, `fuel_level_pct`) | Usable GTE electric range (`~48 km` at 100% SoC) + gasoline range (`50 L` tank at `~6.0 L/100km`) |
+| **Fuel Tank Level** | `fuel_level_pct`, `fuel_liters` | Mode `01` `012F` | $\frac{100 \times A}{255}\text{ \%}$ and liters remaining (50 L Passat GTE tank) |
+
+#### 6. 12V Network (`19` CAN Gateway `J533` — `ATSH 710` / `ATCRA 77A`), Diagnostics & GPS
+
+| Metric | JSON Key | Source / PID | Details |
+| :--- | :--- | :--- | :--- |
+| **12V Terminal 30 Voltage** | `aux_12v` | ELM327 `ATRV` | Resting battery voltage (`~12.2V`) vs active HV-to-12V DC-DC charging voltage (`~14.1V`) |
+| **ECU Control Module Voltage** | `ecu_voltage_v` | Mode `01` `0142` | $(256A + B) / 1000.0\text{ V}$ at the engine control unit |
+| **12V AGM Battery SoC** | `aux_12v_soc_pct` | UDS `710` `222B01` | State of Charge (`%`) of the 12V trunk AGM battery monitored by `J367/J533` |
+| **Active Fault Codes (DTC)** | `dtc_count`, `dtc_codes` | Mode `03` (`03`) | Decodes active powertrain trouble codes (`Pxxxx`, `Cxxxx`, `Bxxxx`, `Uxxxx`) |
+| **Chassis VIN** | `vin` | Mode `09` (`0902`) | 17-character vehicle identification number (`WVWZZZ3CZ...`) |
+| **Parked Car GPS Location** | `gps_lat`, `gps_lon`, `gps_acc_m`, `gps_updated_at` | `POST /api/v1/gps` (`/persist/gte_gps.json`) | Saves phone browser geolocation alongside the current odometer reading with a direct Google Maps link |
+
+---
+
+## Local Web Control Portal & REST API (`http://10.0.0.1`)
+
+When connected to the `futedongle` Wi-Fi network (or via captive DNS `http://futedongle.local`), the embedded HTTP server ([`webPortal.cpp`](aa_wireless_dongle/package/aawg/src/webPortal.cpp)) serves a single-page application ([`index.html`](aa_wireless_dongle/board/common/rootfs_overlay/usr/share/futedongle-web/index.html)) with four tabs:
+
+1. **Status**: Wireless Android Auto session state, phone Bluetooth/Wi-Fi peer info, garage trigger badge, quick GTE battery/fuel summary, and one-tap system actions (**Test Garage Open**, **Restart AA**, **Reset Bluetooth Pairings**, **Reboot Dongle**).
+2. **Car (Passat GTE Live OBD2)**: Full real-time dashboard covering HV Traction Battery, 1.4 TSI GDI & DQ400e DSG temperatures/pressures/trims, Electric vs Hybrid kilometer split (trip & lifetime), Odometer, DTC scanner, VIN, and Parked Car GPS Pinning.
+3. **Logs**: Live tail of `/var/log/messages`, `/var/log/aawgd.log`, and `/var/log/gte_telemetry.log` with one-tap copy.
+4. **Settings**: Web form to configure Wi-Fi/Bluetooth names, connection strategy, Garage Opener trigger mode (`obd_start`, `aa_video`, `boot`) and Wi-Fi/UDP target, and Vgate BLE telemetry (`AAWG_ENABLE_OBD_TELEMETRY`, optional `AAWG_OBD_BLE_MAC`), persisted directly to `/persist/aawgd.conf`.
+
+### HTTP REST Endpoints
+
+| Method & Path | Description |
+| :--- | :--- |
+| `GET /api/v1/status` | Returns dongle runtime telemetry, USB/Wi-Fi/BT state, garage opener status, and the embedded `obd` object from `/var/run/gte_telemetry.json` + `/persist/gte_gps.json`. |
+| `POST /api/v1/gps` | Persists parked car GPS coordinates (`{"lat": ..., "lon": ..., "acc": ...}`) and current odometer to `/persist/gte_gps.json`. |
+| `GET /api/v1/logs` | Returns recent system, `aawgd`, garage opener, and `gte_telemetryd` logs. |
+| `GET /api/v1/config` | Returns the active configuration key-value pairs from `/etc/aawgd.conf` and `/persist/aawgd.conf`. |
+| `POST /api/v1/config` | Validates and writes updated configuration settings to `/persist/aawgd.conf` and `/boot/aawgd.conf`. |
+| `POST /api/v1/action/garage-test` | Manually triggers `/etc/init.d/S38garage_opener test` to test garage door opening. |
+| `POST /api/v1/action/restart-aa` | Restarts the `aawgd` proxy session. |
+| `POST /api/v1/action/clear-bt` | Clears paired Bluetooth devices from `/persist/bluetooth` and restarts Bluetooth discovery. |
+| `POST /api/v1/action/reboot` | Cleanly reboots the dongle. |
+
+---
+
+## Configuration Reference (`/etc/aawgd.conf`)
+
+Configuration is loaded from `/etc/aawgd.conf`, overridden by `/boot/aawgd.conf` (FAT32 `WirelessAA` partition) and `/persist/aawgd.conf` (saved via the Web Portal).
+
+| Variable | Default | Description |
+| :--- | :--- | :--- |
+| `AAWG_COUNTRY_CODE` | `ES` | ISO/IEC 3166-1 regulatory domain for 5 GHz / 2.4 GHz Wi-Fi channels. |
+| `AAWG_CONNECTION_STRATEGY` | `1` | `0`: Dongle mode, `1`: Phone first (default), `2`: USB first. |
+| `AAWG_EARLY_USB_VERSION_EXCHANGE` | `0` | `1` enables early AOAP version exchange with the headunit prior to phone Wi-Fi handoff. |
+| `AAWG_BLUETOOTH_NAME` | `futedongle` | Bluetooth alias advertised to the phone. |
+| `AAWG_WIFI_SSID` | `futedongle` | 5 GHz Wi-Fi Access Point SSID used for Wireless Android Auto and Web Portal access. |
+| `AAWG_WIFI_PASSWORD` | `'ConnectAAWirelessDongle'` | Fixed WPA2 passphrase so phone Wi-Fi profiles persist across reboots. |
+| `AAWG_ENABLE_SSH` | `0` (`#1`) | Enables Dropbear SSH server on port `22` (`root` / `password`). |
+| `AAWG_ENABLE_DEBUG_LOG` | `0` | Captures 6 boot diagnostic snapshots to `/boot/car_debug.log` during the first 90 seconds. |
+| `AAWG_ENABLE_WEB_PORTAL` | `1` | Enables the Local Web Control & Telemetry Portal at `http://10.0.0.1`. |
+| `AAWG_ENABLE_GARAGE_OPEN` | `1` | Enables `S38garage_opener`. |
+| `AAWG_GARAGE_TRIGGER_MODE` | `obd_start` | `obd_start` (Car `START` button via BLE OBD2), `aa_video` (Android Auto foreground video), or `boot` (immediate on USB 5V power). |
+| `AAWG_GARAGE_WIFI_SSID` | `'MyGarageWiFi'` | Garage Wi-Fi SSID to associate with when firing the UDP trigger. |
+| `AAWG_GARAGE_WIFI_HIDDEN` | `1` | `1` if the garage Wi-Fi SSID is hidden (`scan_ssid=1`), `0` if broadcast. |
+| `AAWG_GARAGE_WIFI_BAND` | `2.4` | Frequency scan filter (`2.4`, `5`, or `all`) to speed up hidden SSID discovery. |
+| `AAWG_GARAGE_WIFI_PASSWORD` | `'miPassFake'` | WPA2 password for the garage Wi-Fi network. |
+| `AAWG_GARAGE_UDP_HOST` | `192.168.1.50` | Target IP address of the garage door controller. |
+| `AAWG_GARAGE_UDP_PORT` | `9876` | Target UDP port of the garage door controller. |
+| `AAWG_GARAGE_UDP_PAYLOAD` | `'OPEN_GARAGE'` | ASCII payload transmitted in the DSCP `EF` UDP burst. |
+| `AAWG_GARAGE_TIMEOUT_SEC` | `5` | Maximum association timeout (seconds) before falling back to the 5 GHz Android Auto AP. |
+| `AAWG_ENABLE_OBD_TELEMETRY` | `1` | Enables `/usr/bin/gte_telemetryd` (`S94gte_telemetry`). |
+| `AAWG_OBD_BLE_MAC` | *(Auto-discover)* | Optional fixed BLE MAC address (e.g., `D2:E0:2F:8D:5C:7B`) for the Vgate iCar Pro 2S (`IOS-Vlink`) to skip BLE scanning on boot. |
+
+---
+
+## Supported Hardware & Installation
+
+### Supported Boards
+- **Raspberry Pi 4 Model B** *(Primary target — connect via the USB-C port for both power and USB 2.0 OTG data to the car's MIB3 USB port)*
+- **Raspberry Pi Zero W / Zero 2 W** *(Use the micro-USB port marked `USB`, not `PWR`)*
+- **Raspberry Pi 3 A+** *(Use the USB-A port with a USB-A to USB-A data cable)*
+
+### Supported OBD-II BLE Adapter
+- **Vgate iCar Pro 2S (Bluetooth 5.2 BLE V2.3)** — Plugged permanently into the Passat B8 GTE OBD-II port under the driver's dashboard. Features automatic sleep (`< 3 mA`) and wake on CAN/BLE activity.
+
+### Installation
+1. Download the pre-built SD card artifact (`raspberrypi4-sdcard.img.xz`) from **GitHub Actions** or build locally following [BUILDING.md](BUILDING.md).
+2. Flash the image onto a microSD card using Raspberry Pi Imager, BalenaEtcher, or `dd`.
+3. *(Optional)* Mount the `WirelessAA` boot partition and edit `aawgd.conf` (or configure everything later from `http://10.0.0.1` -> **Settings**).
+4. Plug the Vgate iCar Pro 2S into the car's OBD-II port and connect the Raspberry Pi 4 via a data-capable USB-C cable to the car's Android Auto USB port.
+5. Pair your phone with Bluetooth device **`futedongle`** once; subsequent connections and Car-`START` garage triggers happen automatically.
+
+---
+
+## Troubleshooting
+
+### Checking Live Telemetry & Logs
+1. While your phone is connected to the `futedongle` Wi-Fi network (note: disable Mobile Data temporarily if your phone routes `10.0.0.1` over cellular, or browse to `http://10.0.0.1`), open the **Status**, **Car**, or **Logs** tab.
+2. Check the **Vgate iCar Pro 2S BLE** badge in the **Car** tab:
+   - `Connected (IOS-Vlink)`: Active BLE GATT link and live MQB CAN polling.
+   - `Scanning BLE (IOS-Vlink)...`: Ensure the Vgate LED is powered and no phone app (such as Car Scanner or Torque) is currently holding an exclusive BLE connection to `IOS-Vlink`.
+
+### Bluetooth and Wi-Fi Connect, but Headunit Stuck at "Looking for Android Auto"
+- Ensure you are using a high-quality **USB data cable** plugged into the Raspberry Pi's OTG-capable port (the USB-C port on Raspberry Pi 4).
+- If you reset pairings on your phone, open `http://10.0.0.1` -> **Status** -> **Reset Bluetooth Pairings** so both sides establish a clean bond.
