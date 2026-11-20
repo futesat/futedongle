@@ -233,7 +233,7 @@ Configuration is loaded from `/etc/aawgd.conf`, overridden by `/boot/aawgd.conf`
 | `AAWG_GARAGE_TIMEOUT_SEC` | `8` | Maximum association timeout (seconds) before falling back to the 5 GHz Android Auto AP. |
 | `AAWG_GARAGE_HOLD_UNTIL_START` | `1` | `1` to hold Android Auto radios until Car `START` fires the door; `0` to start the 5 GHz Android Auto AP immediately at boot without holding or opening. |
 | `AAWG_GARAGE_HOLD_TIMEOUT_SEC` | `120` | Max wait for Car `START` during the hold; on expiry the trigger is disarmed and Android Auto starts. |
-| `AAWG_ENABLE_OBD_TELEMETRY` | `1` | Enables `/usr/bin/gte_telemetryd` (`S42gte_telemetry`). |
+| `AAWG_ENABLE_OBD_TELEMETRY` | `1` | `1` enables full live telemetry and trip recording; `0` connects to the Vgate BLE only while in `garage_hold` to detect Car `START`, disconnecting immediately after opening. |
 | `AAWG_OBD_BLE_MAC` | *(Auto-discover)* | Optional fixed BLE MAC address (e.g., `D2:E0:2F:8D:5C:7B`) for the Vgate iCar Pro 2S (`IOS-Vlink`) to skip BLE scanning on boot. |
 
 ---

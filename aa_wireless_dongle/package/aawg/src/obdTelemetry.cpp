@@ -425,6 +425,22 @@ std::string getConfiguredObdMac() {
     return "";
 }
 
+bool isObdTelemetryEnabled() {
+    const char* env = getenv("AAWG_ENABLE_OBD_TELEMETRY");
+    if (!env || env[0] == '\0') {
+        return true;
+    }
+    return (std::string(env) == "1");
+}
+
+bool isGarageOpenEnabled() {
+    const char* env = getenv("AAWG_ENABLE_GARAGE_OPEN");
+    if (!env || env[0] == '\0') {
+        return true;
+    }
+    return (std::string(env) == "1");
+}
+
 bool shouldFireGarageOnObdStart() {
     return (access(GARAGE_HOLD_FLAG, F_OK) == 0) &&
            (access(GARAGE_OPENED_FLAG, F_OK) != 0);
@@ -966,6 +982,19 @@ int main() {
 
     Logger::instance()->info("OBD Telemetry: Starting Passat GTE OBD-II BLE daemon (gte_telemetryd)\n");
 
+    const bool telemetryEnabled = isObdTelemetryEnabled();
+    const bool garageEnabled = isGarageOpenEnabled();
+
+    if (!telemetryEnabled && !garageEnabled) {
+        Logger::instance()->info("OBD Telemetry: Both telemetry and garage opener disabled; exiting.\n");
+        return 0;
+    }
+
+    if (!telemetryEnabled && access(GARAGE_HOLD_FLAG, F_OK) != 0) {
+        Logger::instance()->info("OBD Telemetry: Live telemetry disabled (AAWG_ENABLE_OBD_TELEMETRY=0) and not waiting in garage_hold; exiting immediately.\n");
+        return 0;
+    }
+
     TelemetryState state;
     state.adapterMac = getConfiguredObdMac();
     loadLifetimeStats(state);
@@ -995,6 +1024,11 @@ int main() {
     }
 
     while (!g_shouldExit.load()) {
+        if (!telemetryEnabled && access(GARAGE_HOLD_FLAG, F_OK) != 0) {
+            Logger::instance()->info("OBD Telemetry: Live telemetry disabled and garage_hold is no longer active; exiting daemon.\n");
+            break;
+        }
+
         // Do not contend with 2.4 GHz Wi-Fi while S38garage_opener fire is running
         if (access(GARAGE_FIRING_FLAG, F_OK) == 0) {
             std::this_thread::sleep_for(std::chrono::milliseconds(500));
@@ -1233,6 +1267,16 @@ int main() {
 
                 // Pause BLE traffic while S38garage_opener fire uses the shared 2.4 GHz radio
                 fireGarageOpenerProcess();
+
+                if (!telemetryEnabled) {
+                    Logger::instance()->info(
+                        "OBD Telemetry: Garage door opened and live telemetry is disabled (AAWG_ENABLE_OBD_TELEMETRY=0); disconnecting BLE and exiting daemon.\n");
+                    elm.sendCommand("ATLP", 400);
+                    elm.closeSession();
+                    try { (*devDisconnect)(); } catch (...) {}
+                    g_shouldExit.store(true);
+                    break;
+                }
             }
 
             if (state.ignitionOn) {
@@ -1736,6 +1780,16 @@ int main() {
                         }
                         break;
                     }
+                }
+
+                if (!telemetryEnabled && access(GARAGE_HOLD_FLAG, F_OK) != 0) {
+                    Logger::instance()->info(
+                        "OBD Telemetry: Garage hold is no longer active and live telemetry is disabled; disconnecting BLE and exiting daemon.\n");
+                    elm.sendCommand("ATLP", 400);
+                    elm.closeSession();
+                    try { (*devDisconnect)(); } catch (...) {}
+                    g_shouldExit.store(true);
+                    break;
                 }
 
                 // When waiting in the garage for the driver to press START, poll every 1s
