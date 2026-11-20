@@ -487,16 +487,6 @@ void AAWProxy::handleClient(int server_sock) {
     usb_version_minor = 0;
 
     Logger::instance()->info("Forwarding stopped\n");
-
-    if (access("/var/run/garage_firing", F_OK) == 0) {
-        // gte_telemetryd triggered S38garage_opener fire on Car START while proxy was active;
-        // wait for restore_ap() to finish and skip the 2s retry sleep in main().
-        Logger::instance()->info("Waiting for OBD-triggered garage Wi-Fi burst to finish restoring 5 GHz AP\n");
-        for (int i = 0; i < 120 && access("/var/run/garage_firing", F_OK) == 0; ++i) {
-            usleep(100000);
-        }
-        m_triggered_garage_opener = true;
-    }
 }
 
 std::optional<std::thread> AAWProxy::startServer(int32_t port) {

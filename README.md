@@ -95,8 +95,6 @@ Afterwards the gate runs `ifup wlan0` and the 5 GHz AP comes up.
 2. Sends 4 bursts of DSCP `EF` (`TOS 0xb8`, `SO_PRIORITY=6`, WMM `AC_VO`) UDP datagrams via `/usr/bin/garage_udp_send` over the **already associated** garage link (re-associating on the cached frequency only if the link dropped).
 3. Tears down client mode and removes the hold so `S43garage_gate` brings up Android Auto.
 
-With `AAWG_GARAGE_HOLD_UNTIL_START=0` the legacy flow is used instead: the AP starts right after the probe and `fire` temporarily switches `wlan0` back to the garage network, then restores the AP.
-
 ---
 
 ## VW MQB & Passat B8 GTE Live Telemetry (`gte_telemetryd`)
@@ -233,7 +231,6 @@ Configuration is loaded from `/etc/aawgd.conf`, overridden by `/boot/aawgd.conf`
 | `AAWG_GARAGE_UDP_PORT` | `9876` | Target UDP port of the garage door controller. |
 | `AAWG_GARAGE_UDP_PAYLOAD` | `'OPEN_GARAGE'` | ASCII payload transmitted in the DSCP `EF` UDP burst. |
 | `AAWG_GARAGE_TIMEOUT_SEC` | `8` | Maximum association timeout (seconds) before falling back to the 5 GHz Android Auto AP. |
-| `AAWG_GARAGE_HOLD_UNTIL_START` | `1` | In `obd_start` mode, keeps the garage link associated and holds Android Auto radios until Car `START` fires the door (`0` restores the legacy AP-first flow). |
 | `AAWG_GARAGE_HOLD_TIMEOUT_SEC` | `120` | Max wait for Car `START` during the hold; on expiry the trigger is disarmed and Android Auto starts. |
 | `AAWG_ENABLE_OBD_TELEMETRY` | `1` | Enables `/usr/bin/gte_telemetryd` (`S42gte_telemetry`). |
 | `AAWG_OBD_BLE_MAC` | *(Auto-discover)* | Optional fixed BLE MAC address (e.g., `D2:E0:2F:8D:5C:7B`) for the Vgate iCar Pro 2S (`IOS-Vlink`) to skip BLE scanning on boot. |

@@ -426,7 +426,7 @@ std::string getConfiguredObdMac() {
 }
 
 bool shouldFireGarageOnObdStart() {
-    return (access(GARAGE_IN_RANGE_FLAG, F_OK) == 0) &&
+    return (access(GARAGE_HOLD_FLAG, F_OK) == 0) &&
            (access(GARAGE_OPENED_FLAG, F_OK) != 0);
 }
 
