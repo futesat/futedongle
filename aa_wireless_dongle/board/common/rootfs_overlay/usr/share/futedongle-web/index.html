@@ -733,6 +733,18 @@
             <small>Aborts immediately to start Android Auto AP if out of garage Wi-Fi range (2–15s).</small>
             <input type="number" name="AAWG_GARAGE_TIMEOUT_SEC" id="cfg-garage-timeout" min="2" max="15" required>
           </div>
+          <div class="form-row">
+            <label>Hold Radios Until Car START (AAWG_GARAGE_HOLD_UNTIL_START)</label>
+            <select name="AAWG_GARAGE_HOLD_UNTIL_START" id="cfg-garage-hold">
+              <option value="1">1 — Hold radios until Car START button is pressed (Recommended)</option>
+              <option value="0">0 — Start Android Auto AP immediately at boot (Skip hold/open)</option>
+            </select>
+          </div>
+          <div class="form-row">
+            <label>Garage Hold Timeout Seconds (AAWG_GARAGE_HOLD_TIMEOUT_SEC)</label>
+            <small>Maximum seconds to wait for Car START before releasing hold without opening (10–600s).</small>
+            <input type="number" name="AAWG_GARAGE_HOLD_TIMEOUT_SEC" id="cfg-garage-hold-timeout" min="10" max="600" required>
+          </div>
 
           <div class="section-divider">
             <h3>Passat GTE OBD-II Telemetry</h3>
@@ -1048,6 +1060,8 @@
         document.getElementById('cfg-garage-port').value = c.AAWG_GARAGE_UDP_PORT ?? '9876';
         document.getElementById('cfg-garage-payload').value = c.AAWG_GARAGE_UDP_PAYLOAD ?? 'OPEN_GARAGE';
         document.getElementById('cfg-garage-timeout').value = c.AAWG_GARAGE_TIMEOUT_SEC ?? '5';
+        document.getElementById('cfg-garage-hold').value = c.AAWG_GARAGE_HOLD_UNTIL_START ?? '1';
+        document.getElementById('cfg-garage-hold-timeout').value = c.AAWG_GARAGE_HOLD_TIMEOUT_SEC ?? '120';
         document.getElementById('cfg-obd').value = c.AAWG_ENABLE_OBD_TELEMETRY ?? '1';
         document.getElementById('cfg-obdmac').value = c.AAWG_OBD_BLE_MAC ?? '';
       } catch (e) {

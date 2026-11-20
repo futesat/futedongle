@@ -51,8 +51,7 @@ ssize_t AAWProxy::writeFully(int fd, const unsigned char *buffer, size_t nbyte) 
         if (len < 0) {
             // In f_accessory.c, acc_write() returns -ENODEV immediately if dev->online
             // momentarily drops to 0 during a USB host SET_CONFIGURATION transition.
-            if (fd == m_usb_fd && (errno == ENODEV || errno == EAGAIN) &&
-                !m_triggered_garage_opener.load() && usb_enodev_retries < 15) {
+            if (fd == m_usb_fd && (errno == ENODEV || errno == EAGAIN) && usb_enodev_retries < 15) {
                 ++usb_enodev_retries;
                 usleep(20000);
                 continue;
@@ -477,9 +476,6 @@ void AAWProxy::handleClient(int server_sock) {
     close(m_usb_fd);
     m_usb_fd = -1;
 
-    if (m_triggered_garage_opener.load()) {
-        shutdown(m_tcp_fd, SHUT_RDWR);
-    }
     close(m_tcp_fd);
     m_tcp_fd = -1;
 

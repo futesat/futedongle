@@ -9,7 +9,6 @@
 class AAWProxy {
 public:
     std::optional<std::thread> startServer(int32_t port);
-    bool didTriggerGarageOpener() const { return m_triggered_garage_opener.load(); }
 
 private:
     enum class ProxyDirection {
@@ -40,7 +39,6 @@ private:
     std::optional<std::thread> m_tcp_usb_thread = std::nullopt;
 
     std::atomic<bool> m_log_communication = false;
-    std::atomic<bool> m_triggered_garage_opener = false;
     std::mutex m_exit_mutex;
     std::condition_variable m_exit_cv;
     bool m_usb_tcp_done = false;

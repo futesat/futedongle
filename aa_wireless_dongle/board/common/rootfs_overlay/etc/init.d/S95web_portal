@@ -6,8 +6,12 @@
 DAEMON="futedongle_web"
 PIDFILE="/var/run/$DAEMON.pid"
 
-if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
-	. /etc/aawgd.conf
+if [ -z "$AAWG_CONF_SOURCED" ]; then
+	set -a
+	for conf in /etc/aawgd.conf /boot/aawgd.conf /persist/aawgd.conf; do
+		[ -r "$conf" ] && . "$conf"
+	done
+	set +a
 fi
 
 RETVAL=0

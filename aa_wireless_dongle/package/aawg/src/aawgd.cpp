@@ -53,11 +53,9 @@ int main(void) {
             btConnectionThread->join();
         }
 
-        if (!proxy.didTriggerGarageOpener()) {
-            UsbManager::instance().disableGadget();
-        }
+        UsbManager::instance().disableGadget();
 
-        if (connectionStrategy != ConnectionStrategy::DONGLE_MODE && !proxy.didTriggerGarageOpener()) {
+        if (connectionStrategy != ConnectionStrategy::DONGLE_MODE) {
             // sleep for a couple of seconds before retrying
             sleep(2);
         }

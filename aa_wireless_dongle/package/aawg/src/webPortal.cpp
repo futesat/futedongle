@@ -550,7 +550,9 @@ std::map<std::string, std::string> readConfigMap() {
         {"AAWG_GARAGE_UDP_HOST", "192.168.1.50"},
         {"AAWG_GARAGE_UDP_PORT", "9876"},
         {"AAWG_GARAGE_UDP_PAYLOAD", "OPEN_GARAGE"},
-        {"AAWG_GARAGE_TIMEOUT_SEC", "8"}
+        {"AAWG_GARAGE_TIMEOUT_SEC", "8"},
+        {"AAWG_GARAGE_HOLD_UNTIL_START", "1"},
+        {"AAWG_GARAGE_HOLD_TIMEOUT_SEC", "120"}
     };
 
     std::ifstream file(getConfFilePath());
@@ -687,7 +689,8 @@ void handlePostConfig(int clientFd, const std::string& body) {
                    k == "AAWG_ENABLE_WEB_PORTAL" ||
                    k == "AAWG_ENABLE_OBD_TELEMETRY" ||
                    k == "AAWG_ENABLE_GARAGE_OPEN" ||
-                   k == "AAWG_GARAGE_WIFI_HIDDEN") {
+                   k == "AAWG_GARAGE_WIFI_HIDDEN" ||
+                   k == "AAWG_GARAGE_HOLD_UNTIL_START") {
             if (val != "0" && val != "1") {
                 sendJsonError(clientFd, "400 Bad Request", k + " must be 0 or 1");
                 return;
@@ -740,6 +743,11 @@ void handlePostConfig(int clientFd, const std::string& body) {
         } else if (k == "AAWG_GARAGE_TIMEOUT_SEC") {
             if (!isValidIntInRange(val, 2, 15)) {
                 sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_TIMEOUT_SEC must be between 2 and 15 seconds");
+                return;
+            }
+        } else if (k == "AAWG_GARAGE_HOLD_TIMEOUT_SEC") {
+            if (!isValidIntInRange(val, 10, 600)) {
+                sendJsonError(clientFd, "400 Bad Request", "AAWG_GARAGE_HOLD_TIMEOUT_SEC must be between 10 and 600 seconds");
                 return;
             }
         }
@@ -806,7 +814,9 @@ void handlePostConfig(int clientFd, const std::string& body) {
                 << "AAWG_GARAGE_UDP_HOST=" << shellQuote(cfg["AAWG_GARAGE_UDP_HOST"]) << "\n"
                 << "AAWG_GARAGE_UDP_PORT=" << cfg["AAWG_GARAGE_UDP_PORT"] << "\n"
                 << "AAWG_GARAGE_UDP_PAYLOAD=" << shellQuote(cfg["AAWG_GARAGE_UDP_PAYLOAD"]) << "\n"
-                << "AAWG_GARAGE_TIMEOUT_SEC=" << cfg["AAWG_GARAGE_TIMEOUT_SEC"] << "\n";
+                << "AAWG_GARAGE_TIMEOUT_SEC=" << cfg["AAWG_GARAGE_TIMEOUT_SEC"] << "\n"
+                << "AAWG_GARAGE_HOLD_UNTIL_START=" << cfg["AAWG_GARAGE_HOLD_UNTIL_START"] << "\n"
+                << "AAWG_GARAGE_HOLD_TIMEOUT_SEC=" << cfg["AAWG_GARAGE_HOLD_TIMEOUT_SEC"] << "\n";
 
     std::string serialized = confContent.str();
     int outFd = open(tmpPath.c_str(), O_CREAT | O_WRONLY | O_TRUNC, 0644);

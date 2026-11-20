@@ -4,14 +4,13 @@
 #
 set -o allexport
 
-if [ -z "$AAWG_CONF_SOURCED" ]; then
-	if [ -r /etc/aawgd.conf ]; then
-		echo "Source /etc/aawgd.conf"
-		. /etc/aawgd.conf
-		export AAWG_CONF_SOURCED=1
+for conf in /etc/aawgd.conf /boot/aawgd.conf /persist/aawgd.conf; do
+	if [ -r "$conf" ]; then
+		echo "Source $conf"
+		. "$conf"
 	fi
-fi
-
+done
+export AAWG_CONF_SOURCED=1
 
 ## Setup Wifi password
 if [ -z "${AAWG_WIFI_PASSWORD}" ]; then
