@@ -21,39 +21,6 @@
 #include "bluetoothHandler.h"
 #include "proxyHandler.h"
 
-namespace {
-std::atomic<bool> s_garage_opener_fired_this_boot{false};
-
-int runGarageOpenerFire() {
-    pid_t pid = fork();
-    if (pid < 0) {
-        return -1;
-    }
-    if (pid == 0) {
-        // Close all inherited descriptors >= 3 before exec so child daemons
-        // (hostapd, dnsmasq) never hold open D-Bus, Netlink, or USB descriptors,
-        // without touching /bin/sh's own script descriptor after exec.
-        long max_fd = sysconf(_SC_OPEN_MAX);
-        if (max_fd < 0 || max_fd > 1024) {
-            max_fd = 1024;
-        }
-        for (int fd = 3; fd < static_cast<int>(max_fd); ++fd) {
-            close(fd);
-        }
-        execl("/etc/init.d/S38garage_opener", "S38garage_opener", "fire", static_cast<char*>(nullptr));
-        _exit(127);
-    }
-
-    int status = 0;
-    while (waitpid(pid, &status, 0) < 0) {
-        if (errno != EINTR) {
-            return -1;
-        }
-    }
-    return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
-}
-} // namespace
-
 void empty_signal_handler(int signal) {
     // Empty. We don't want to do anything but interrupt the thread.
 }
@@ -161,19 +128,6 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
             break;
     }
 
-    const char* triggerModeEnv = getenv("AAWG_GARAGE_TRIGGER_MODE");
-    const std::string triggerMode = (triggerModeEnv && triggerModeEnv[0] != '\0') ? triggerModeEnv : "obd_start";
-    const bool monitor_garage_video =
-        (triggerMode == "aa_video") &&
-        (direction == ProxyDirection::TCP_to_USB) &&
-        !s_garage_opener_fired_this_boot.load() &&
-        (access("/var/run/garage_in_range", F_OK) == 0) &&
-        (access("/var/run/garage_opened_once", F_OK) != 0);
-    int video_channel_id = -1;
-    ssize_t video_idr_len = 0;
-    bool video_size_varied = false;
-    int foreground_video_frames = 0;
-
     while (!should_exit) {
         // Read
         ssize_t len = read_message
@@ -216,40 +170,6 @@ void AAWProxy::forward(ProxyDirection direction, std::atomic<bool>& should_exit)
         }
         else if (should_exit) {
             break;
-        }
-
-        // Detect active H.264 video projection on the MIB3 display:
-        // - buffer[0] != 0 excludes Control/SSL/ServiceDiscovery (Channel 0).
-        // - (buffer[1] & 0x0C) == 0x08 requires ENCRYPTED (0x08) and non-CONTROL (0x04 == 0).
-        // - Locking onto video_channel_id requires either a fragmented AAP frame
-        //   ((buffer[1] & 0x03) == 0x01, > 16 KB keyframe) or len > 4200 (which covers even
-        //   low-bitrate dark-mode 800x480 H.264 IDR keyframes while excluding 20ms 48kHz
-        //   stereo PCM audio at 3902 bytes and AAC audio < 800 bytes).
-        // - Requiring at least one subsequent frame on that channel to differ in byte length
-        //   by > 64 bytes from the initial keyframe mathematically rules out fixed-size PCM
-        //   audio buffers while still triggering in ~0.4s (12 frames) on a parked static screen.
-        if (monitor_garage_video && buffer[0] != 0 && (buffer[1] & 0x0C) == 0x08) {
-            const bool is_first_frag = ((buffer[1] & 0x03) == 0x01);
-            if (video_channel_id < 0 && (is_first_frag || len > 4200)) {
-                video_channel_id = static_cast<int>(buffer[0]);
-                video_idr_len = len;
-            }
-            if (video_channel_id == static_cast<int>(buffer[0]) && len >= 64) {
-                if ((len > video_idr_len + 64) || (video_idr_len > len + 64)) {
-                    video_size_varied = true;
-                }
-                ++foreground_video_frames;
-                if (foreground_video_frames >= 12 && video_size_varied) {
-                    bool expected = false;
-                    if (s_garage_opener_fired_this_boot.compare_exchange_strong(expected, true)) {
-                        Logger::instance()->info(
-                            "Foreground Android Auto H.264 video detected in garage (ch=%d, %d frames); triggering garage door opener\n",
-                            video_channel_id, foreground_video_frames);
-                        m_triggered_garage_opener = true;
-                        break;
-                    }
-                }
-            }
         }
     }
 
@@ -568,15 +488,7 @@ void AAWProxy::handleClient(int server_sock) {
 
     Logger::instance()->info("Forwarding stopped\n");
 
-    if (m_triggered_garage_opener.load()) {
-        // Detach USB gadget immediately so the head unit cleanly exits the first session,
-        // and allow 100ms for the kernel to transmit TCP FIN over 5 GHz before switching wlan0.
-        UsbManager::instance().disableGadget();
-        usleep(100000);
-        Logger::instance()->info("Executing runtime garage door opener sequence (/etc/init.d/S38garage_opener fire)\n");
-        int rc = runGarageOpenerFire();
-        Logger::instance()->info("Garage door opener sequence completed (rc=%d); restarting Android Auto session\n", rc);
-    } else if (access("/var/run/garage_firing", F_OK) == 0) {
+    if (access("/var/run/garage_firing", F_OK) == 0) {
         // gte_telemetryd triggered S38garage_opener fire on Car START while proxy was active;
         // wait for restore_ap() to finish and skip the 2s retry sleep in main().
         Logger::instance()->info("Waiting for OBD-triggered garage Wi-Fi burst to finish restoring 5 GHz AP\n");

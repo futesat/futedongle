@@ -25,7 +25,7 @@ load_conf() {
 case "$1" in
 	start)
 		load_conf
-		if [ "${AAWG_ENABLE_OBD_TELEMETRY:-1}" != "1" ] && [ "${AAWG_GARAGE_TRIGGER_MODE:-obd_start}" != "obd_start" ]; then
+		if [ "${AAWG_ENABLE_OBD_TELEMETRY:-1}" != "1" ] && [ "${AAWG_ENABLE_GARAGE_OPEN:-0}" != "1" ]; then
 			echo "OBD Telemetry & OBD Car-Start trigger disabled; skipping $DAEMON."
 			exit 0
 		fi

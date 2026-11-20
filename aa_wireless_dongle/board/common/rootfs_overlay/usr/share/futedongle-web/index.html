@@ -680,20 +680,13 @@
 
           <div class="section-divider">
             <h3>Garage Door Opener (S38garage_opener)</h3>
-            <p>Probes the garage Wi-Fi AP on boot (without opening on keyfob unlock) and fires the UDP trigger when the car START button is pressed via OBD-II (or on Android Auto foreground video).</p>
+            <p>Probes the garage Wi-Fi AP on boot (without opening on keyfob unlock) and fires the UDP trigger when the car START button is pressed via OBD-II.</p>
           </div>
           <div class="form-row">
             <label>Garage Opener (AAWG_ENABLE_GARAGE_OPEN)</label>
             <select name="AAWG_ENABLE_GARAGE_OPEN" id="cfg-garage-en">
               <option value="1">1 — Enabled</option>
               <option value="0">0 — Disabled</option>
-            </select>
-          </div>
-          <div class="form-row">
-            <label>Garage Trigger Mode (AAWG_GARAGE_TRIGGER_MODE)</label>
-            <select name="AAWG_GARAGE_TRIGGER_MODE" id="cfg-garage-mode">
-              <option value="obd_start">obd_start — On Car START Button (Vgate iCar Pro 2S OBD-II)</option>
-              <option value="aa_video">aa_video — On Android Auto Foreground Video (MIB3 Screen)</option>
             </select>
           </div>
           <div class="form-row">
@@ -1047,7 +1040,6 @@
         document.getElementById('cfg-web').value = c.AAWG_ENABLE_WEB_PORTAL ?? '1';
         document.getElementById('cfg-ssh').value = c.AAWG_ENABLE_SSH ?? '0';
         document.getElementById('cfg-garage-en').value = c.AAWG_ENABLE_GARAGE_OPEN ?? '1';
-        document.getElementById('cfg-garage-mode').value = c.AAWG_GARAGE_TRIGGER_MODE ?? 'obd_start';
         document.getElementById('cfg-garage-ssid').value = c.AAWG_GARAGE_WIFI_SSID ?? 'MyGarageWiFi';
         document.getElementById('cfg-garage-hidden').value = c.AAWG_GARAGE_WIFI_HIDDEN ?? '1';
         document.getElementById('cfg-garage-band').value = c.AAWG_GARAGE_WIFI_BAND ?? '2.4';

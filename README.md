@@ -3,7 +3,7 @@
 DIY Wireless Android Auto adapter built on Buildroot and Raspberry Pi (optimized for **Raspberry Pi 4 Model B** and **2020 VW Passat B8 GTE MIB3**), featuring:
 
 1. **Native 5 GHz Wireless Android Auto Proxy (`aawgd`)** — Zero-modification AAP/GAL passthrough over 5 GHz Wi-Fi (`Channel 36`) and Linux USB Gadget (`f_accessory`), with no extra phone app required.
-2. **Smart Two-Stage Garage Door Opener (`S38garage_opener`)** — Probes garage Wi-Fi availability at boot without false-triggering when unlocking the car door (`Klemme 30G`), and fires high-priority UDP trigger bursts the instant the **Car `START` button (`Klemme 15` / `READY`)** is pressed (`obd_start`) or when Android Auto projects foreground video (`aa_video`).
+2. **Smart Two-Stage Garage Door Opener (`S38garage_opener`)** — Probes garage Wi-Fi availability at boot without false-triggering when unlocking the car door (`Klemme 30G`), and fires high-priority UDP trigger bursts the instant the **Car `START` button (`Klemme 15` / `READY`)** is pressed, holding the Android Auto radios off until the door has been triggered.
 3. **Live VW MQB & Passat B8 GTE OBD-II / UDS Telemetry (`gte_telemetryd`)** — Persistent Bluetooth 5.2 BLE GATT client (`Vgate iCar Pro 2S` / `IOS-Vlink`) that polls standard OBD-II PIDs and Volkswagen MQB UDS modules (`7E0`, `7E1`, `7E4`, `7E5`, `710`, `714`) in real time while Android Auto runs concurrently.
 4. **Local Web Control & Telemetry Portal (`http://10.0.0.1`)** — Mobile-first dashboard accessible from any browser on the `futedongle` Wi-Fi network with live **Status**, **Car (GTE Telemetry)**, **Logs**, and **Settings** tabs.
 
@@ -40,13 +40,17 @@ DIY Wireless Android Auto adapter built on Buildroot and Raspberry Pi (optimized
 
 ```mermaid
 flowchart TD
-    Boot["Boot (Klemme 30G USB 5V Power)"] --> S38["S38garage_opener probe (2.4 GHz Garage Wi-Fi Check)"]
-    S38 -->|Caches BSSID, Freq, IP & ARP in /var/run/garage_in_range| S39["S39hostapd_conf & S40network (5 GHz AP 10.0.0.1/24)"]
-    S39 --> S41["S41bluetooth & S80dnsmasq (no-ping instant DHCP)"]
+    Boot["Boot (Klemme 30G USB 5V Power)"] --> S38["S38garage_opener start (2.4 GHz Garage Wi-Fi Probe)"]
+    S38 -->|In range: keep link + /var/run/garage_hold| S41["S41bluetooth"]
+    S38 -->|Not in range| S40["S40network (5 GHz AP 10.0.0.1/24)"]
+    S40 --> S41
     S41 --> S42["S42gte_telemetry (BLE Vgate iCar Pro 2S Daemon)"]
-    S41 --> S93["S93aawgd (Wireless Android Auto Proxy + Web Portal :80)"]
+    S42 --> S43{"S43garage_gate: hold active?"}
     S42 -->|Polls 010C + ATRV every 350ms| StartCheck{"Car START Pressed? (Klemme 15 / READY)"}
-    StartCheck -->|Yes & /var/run/garage_in_range exists| Fire["S38garage_opener fire (DSCP EF UDP Burst -> Restore 5 GHz AP)"]
+    StartCheck -->|Yes & garage held| Fire["S38garage_opener fire (UDP burst over held link)"]
+    Fire -->|Hold released| S43
+    S43 -->|Released or timeout| AP["ifup wlan0 (5 GHz AP)"]
+    AP --> S93["S93aawgd (Wireless Android Auto Proxy + Web Portal :80)"]
     S42 -->|Writes atomic JSON every 1.2s| TelemetryJSON["/var/run/gte_telemetry.json"]
     TelemetryJSON --> WebPortal["http://10.0.0.1 (Status & Car Tabs)"]
 ```
@@ -55,9 +59,9 @@ flowchart TD
 
 | Order | Init Script / Binary | Responsibility |
 | :--- | :--- | :--- |
-| `S38` | `S38garage_opener` (`/usr/bin/garage_udp_send`) | Probes garage Wi-Fi availability at boot (`probe` mode) or executes immediate UDP opening (`boot` mode). Called with `fire` when the active trigger fires. |
+| `S38` | `S38garage_opener` (`/usr/bin/garage_udp_send`) | Probes garage Wi-Fi availability at boot and keeps the link up when in range. Called with `fire` by `gte_telemetryd` on Car `START`, and with `release` by `S43garage_gate` on hold timeout. |
 | `S39` | `S39hostapd_conf` | Generates `/var/run/hostapd.conf` for the 5 GHz (`hw_mode=a`, `channel=36`, `HT40+`) or 2.4 GHz Android Auto access point. |
-| `S40` | `S40network` | Brings up `lo` and `wlan0` (`10.0.0.1/24`) and launches `hostapd`. |
+| `S40` | `S40network` | Brings up `lo` and `wlan0` (`10.0.0.1/24`) and launches `hostapd` (skipped while `/var/run/garage_hold` exists). |
 | `S41` | `S41bluetooth` | Loads Broadcom `hci_uart` firmware (`BCM4345C0.hcd`), brings `hci0` UP synchronously, and starts `bluetoothd`. |
 | `S42` | `S42gte_telemetry` (`/usr/bin/gte_telemetryd`) | Supervises the BLE OBD-II & VW MQB UDS telemetry daemon and Car-`START` garage trigger monitor (launched early right after Bluetooth). |
 | `S43` | `S43garage_gate` | If the garage Wi-Fi was found at boot, blocks the rest of the boot (no Android Auto AP, no phone Bluetooth, no `aawgd`) while `wlan0` stays associated with the garage AP, until Car `START` sends the UDP trigger or `AAWG_GARAGE_HOLD_TIMEOUT_SEC` expires; then brings up the 5 GHz AP. |
@@ -70,27 +74,28 @@ flowchart TD
 
 On Volkswagen MQB vehicles (such as the Passat B8 GTE), unlocking the car with the keyfob energizes the USB data port (`Klemme 30G`) **before** the driver enters the cabin or starts the car. Opening the garage door immediately at boot would trigger the door every time the user merely unlocks the car to grab something from the cabin.
 
-FuteDongle solves this with a **two-stage architecture** and selectable `AAWG_GARAGE_TRIGGER_MODE`:
+FuteDongle solves this by waiting for the **Car `START` button** and keeping every Android Auto radio off until the door has been triggered:
 
-### 1. Stage 1 — Boot Probe (`S38garage_opener probe`)
-- Temporarily associates `wlan0` to `AAWG_GARAGE_WIFI_SSID` (supporting hidden 2.4 GHz or 5 GHz networks via `scan_ssid=1` and BSSID/frequency lock).
-- Verifies WPA2 4-way EAPOL key installation (`CTRL-EVENT-CONNECTED`), acquires a lease (or applies deterministic static fallback IP + gateway ARP priming), and saves the discovered `GARAGE_BSSID`, `GARAGE_FREQ`, `GARAGE_LOCAL_IP`, `GARAGE_GW_IP`, and `GARAGE_GW_MAC` into `/var/run/garage_in_range`.
-- Immediately tears down client mode and starts the 5 GHz `futedongle` Access Point so the driver's phone can connect without delay.
+### 1. Boot Probe (`S38garage_opener start`)
+- Associates `wlan0` to `AAWG_GARAGE_WIFI_SSID` (hidden 2.4 GHz networks supported via `scan_ssid=1`), acquires a DHCP lease and caches the frequency, IP, gateway and target ARP entries in `/var/run/garage_env`.
+- **Not in range**: tears down client mode and the boot continues normally (5 GHz AP, Bluetooth, `aawgd`).
+- **In range**: keeps `wpa_supplicant` and the lease alive and creates `/var/run/garage_hold`.
 
-### 2. Stage 2 — Trigger Execution (`S38garage_opener fire`)
+### 2. Hold Gate (`S43garage_gate`)
+While `/var/run/garage_hold` exists, `S40network` skips `hostapd` and `S43garage_gate` blocks the rest of the boot: no Android Auto AP, no phone Bluetooth agent, no `aawgd`. Only `bluetoothd` and `gte_telemetryd` run, so the Vgate BLE link can detect the car start. The hold ends when:
+- Car `START` fires the door (see below), or
+- `AAWG_GARAGE_HOLD_TIMEOUT_SEC` elapses (the car was only unlocked): the hold is released **without** opening and the trigger is disarmed for this drive, or
+- `gte_telemetryd` is not running, so `START` cannot be detected.
 
-Controlled by `AAWG_GARAGE_TRIGGER_MODE`:
+Afterwards the gate runs `ifup wlan0` and the 5 GHz AP comes up.
 
-| Mode | Trigger Condition | How It Works |
-| :--- | :--- | :--- |
-| **`obd_start`** *(Default)* | **Car `START` button (`Klemme 15` / `READY`)** | `gte_telemetryd` connects via BLE to the Vgate iCar Pro 2S. While the car is only unlocked (`Klemme 30G`), Terminal 15 is OFF (`010C` returns `NO DATA` and `ATRV` is at resting `~12.2V`). The moment the driver presses `START` (even in 100% electric `E-Mode` with `0 RPM`), Terminal 15 wakes the CAN gateway (`010C` returns `410Cxxxx` or `ATRV >= 13.5V` from the HV DC-DC converter) and `gte_telemetryd` immediately invokes `/etc/init.d/S38garage_opener fire`. |
-| **`aa_video`** | **Android Auto Foreground Video** | `AAWProxy` inspects the 4-byte AAP frame headers in cleartext, locks onto the video channel when an H.264 IDR keyframe arrives (`len > 4200`), and fires `S38garage_opener fire` once 12 subsequent H.264 P-frames confirm active projection on the car screen. |
-| **`boot`** | **Immediate on USB Power** | Sends the UDP burst directly during `S38garage_opener start` as soon as the USB port receives 5V power. |
+### 3. Trigger (`S38garage_opener fire`)
+`gte_telemetryd` connects via BLE to the Vgate iCar Pro 2S. While the car is only unlocked (`Klemme 30G`), Terminal 15 is OFF (`010C` returns `NO DATA` and `ATRV` is at resting `~12.2V`). The moment the driver presses `START` (even in 100% electric `E-Mode` with `0 RPM`), Terminal 15 wakes the CAN gateway (`010C` returns `410Cxxxx` or `ATRV >= 13.5V` from the HV DC-DC converter) and `gte_telemetryd` invokes `/etc/init.d/S38garage_opener fire`, which:
+1. Creates `/var/run/garage_firing` so `gte_telemetryd` pauses BLE traffic on the shared `CYW43455` radio.
+2. Sends 4 bursts of DSCP `EF` (`TOS 0xb8`, `SO_PRIORITY=6`, WMM `AC_VO`) UDP datagrams via `/usr/bin/garage_udp_send` over the **already associated** garage link (re-associating on the cached frequency only if the link dropped).
+3. Tears down client mode and removes the hold so `S43garage_gate` brings up Android Auto.
 
-When `fire` runs:
-1. Creates `/var/run/garage_firing` so `aawgd` and `gte_telemetryd` pause Bluetooth/BLE activity on the shared `CYW43455` radio.
-2. Reconnects `wlan0` directly to the cached `GARAGE_FREQ` and `GARAGE_BSSID` from Stage 1, restores the cached IP and kernel neighbor ARP entry (`nud permanent`), and sends 4 bursts of DSCP `EF` (`TOS 0xb8`, `SO_PRIORITY=6`, WMM `AC_VO`) UDP datagrams via `/usr/bin/garage_udp_send`.
-3. Restores the 5 GHz `hostapd` AP and `dnsmasq` cleanly so Android Auto reconnects automatically.
+With `AAWG_GARAGE_HOLD_UNTIL_START=0` the legacy flow is used instead: the AP starts right after the probe and `fire` temporarily switches `wlan0` back to the garage network, then restores the AP.
 
 ---
 
@@ -186,7 +191,7 @@ When connected to the `futedongle` Wi-Fi network (or via captive DNS `http://fut
 1. **Status**: Wireless Android Auto session state, phone Bluetooth/Wi-Fi peer info, garage trigger badge, quick GTE battery/fuel summary, and one-tap system actions (**Test Garage Open**, **Restart AA**, **Reset Bluetooth Pairings**, **Reboot Dongle**).
 2. **Car (Passat GTE Live OBD2)**: Full real-time dashboard covering HV Traction Battery, 1.4 TSI GDI & DQ400e DSG temperatures/pressures/trims, Electric vs Hybrid kilometer split (trip & lifetime), Odometer, DTC scanner, VIN, and Parked Car GPS Pinning.
 3. **Logs**: Live tail of `/var/log/messages`, `/var/log/aawgd.log`, and `/var/log/gte_telemetry.log` with one-tap copy.
-4. **Settings**: Web form to configure Wi-Fi/Bluetooth names, connection strategy, Garage Opener trigger mode (`obd_start`, `aa_video`, `boot`) and Wi-Fi/UDP target, and Vgate BLE telemetry (`AAWG_ENABLE_OBD_TELEMETRY`, optional `AAWG_OBD_BLE_MAC`), persisted directly to `/persist/aawgd.conf`.
+4. **Settings**: Web form to configure Wi-Fi/Bluetooth names, connection strategy, Garage Opener Wi-Fi/UDP target, and Vgate BLE telemetry (`AAWG_ENABLE_OBD_TELEMETRY`, optional `AAWG_OBD_BLE_MAC`), persisted directly to `/persist/aawgd.conf`.
 
 ### HTTP REST Endpoints
 
@@ -220,7 +225,6 @@ Configuration is loaded from `/etc/aawgd.conf`, overridden by `/boot/aawgd.conf`
 | `AAWG_ENABLE_DEBUG_LOG` | `0` | Captures 6 boot diagnostic snapshots to `/boot/car_debug.log` during the first 90 seconds. |
 | `AAWG_ENABLE_WEB_PORTAL` | `1` | Enables the Local Web Control & Telemetry Portal at `http://10.0.0.1`. |
 | `AAWG_ENABLE_GARAGE_OPEN` | `1` | Enables `S38garage_opener`. |
-| `AAWG_GARAGE_TRIGGER_MODE` | `obd_start` | `obd_start` (Car `START` button via BLE OBD2), `aa_video` (Android Auto foreground video), or `boot` (immediate on USB 5V power). |
 | `AAWG_GARAGE_WIFI_SSID` | `'MyGarageWiFi'` | Garage Wi-Fi SSID to associate with when firing the UDP trigger. |
 | `AAWG_GARAGE_WIFI_HIDDEN` | `1` | `1` if the garage Wi-Fi SSID is hidden (`scan_ssid=1`), `0` if broadcast. |
 | `AAWG_GARAGE_WIFI_BAND` | `2.4` | Frequency scan filter (`2.4`, `5`, or `all`) to speed up hidden SSID discovery. |

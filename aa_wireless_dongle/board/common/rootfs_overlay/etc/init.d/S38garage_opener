@@ -11,7 +11,7 @@
 #      /var/run/garage_hold is created: S43garage_gate then holds the boot (no
 #      Android Auto AP, no phone Bluetooth) until "fire" sends the UDP trigger
 #      on Car START, or "release" gives up after the hold timeout.
-#   2. "fire" (invoked once by aawgd when Android Auto foreground video starts):
+#   2. "fire" (invoked once by gte_telemetryd when Car START is detected):
 #      Temporarily switches wlan0 from hostapd to the cached garage channel/IP,
 #      transmits the UDP trigger burst via /usr/bin/garage_udp_send, and
 #      deterministically restores the 5 GHz hostapd AP (10.0.0.1/24) + dnsmasq.
@@ -432,12 +432,12 @@ probe_garage_at_boot() {
 	} >> "$GARAGE_ENV_FILE"
 
 	touch "$GARAGE_IN_RANGE_FLAG"
-	if [ "${AAWG_GARAGE_HOLD_UNTIL_START:-1}" = "1" ] && [ "${AAWG_GARAGE_TRIGGER_MODE:-obd_start}" = "obd_start" ]; then
+	if [ "${AAWG_GARAGE_HOLD_UNTIL_START:-1}" = "1" ]; then
 		touch "$GARAGE_HOLD_FLAG"
 		log_info "Garage Wi-Fi '${SSID}' detected at boot (freq=${GARAGE_FREQ:-auto} MHz, ip=${GARAGE_IP:-dhcp}); keeping link up and holding Android Auto radios until Car START."
 		return 0
 	fi
-	log_info "Garage Wi-Fi '${SSID}' detected at boot (freq=${GARAGE_FREQ:-auto} MHz, ip=${GARAGE_IP:-dhcp}, mac=${GARAGE_TARGET_MAC:-arp}); armed for trigger mode '${AAWG_GARAGE_TRIGGER_MODE:-obd_start}'."
+	log_info "Garage Wi-Fi '${SSID}' detected at boot (freq=${GARAGE_FREQ:-auto} MHz, ip=${GARAGE_IP:-dhcp}, mac=${GARAGE_TARGET_MAC:-arp}); armed for Car START."
 	return 0
 }
 

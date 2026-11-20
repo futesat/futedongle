@@ -425,18 +425,7 @@ std::string getConfiguredObdMac() {
     return "";
 }
 
-std::string getGarageTriggerMode() {
-    const char* envMode = getenv("AAWG_GARAGE_TRIGGER_MODE");
-    if (envMode && envMode[0] != '\0') {
-        return toLower(trim(envMode));
-    }
-    return "obd_start";
-}
-
 bool shouldFireGarageOnObdStart() {
-    if (getGarageTriggerMode() != "obd_start") {
-        return false;
-    }
     return (access(GARAGE_IN_RANGE_FLAG, F_OK) == 0) &&
            (access(GARAGE_OPENED_FLAG, F_OK) != 0);
 }
