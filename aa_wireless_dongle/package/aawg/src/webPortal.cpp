@@ -551,7 +551,7 @@ std::map<std::string, std::string> readConfigMap() {
         {"AAWG_GARAGE_UDP_HOST", "192.168.1.50"},
         {"AAWG_GARAGE_UDP_PORT", "9876"},
         {"AAWG_GARAGE_UDP_PAYLOAD", "OPEN_GARAGE"},
-        {"AAWG_GARAGE_TIMEOUT_SEC", "5"}
+        {"AAWG_GARAGE_TIMEOUT_SEC", "8"}
     };
 
     std::ifstream file(getConfFilePath());
@@ -841,7 +841,11 @@ void handlePostConfig(int clientFd, const std::string& body) {
         return;
     }
 
-    (void)system("(/etc/init.d/S94gte_telemetry restart) </dev/null >/dev/null 2>&1 &");
+    if (access("/etc/init.d/S42gte_telemetry", X_OK) == 0) {
+        (void)system("(/etc/init.d/S42gte_telemetry restart) </dev/null >/dev/null 2>&1 &");
+    } else {
+        (void)system("(/etc/init.d/S94gte_telemetry restart) </dev/null >/dev/null 2>&1 &");
+    }
     sendHttpResponse(clientFd, "200 OK", "application/json; charset=utf-8",
                      "{\"ok\":true,\"message\":\"Configuration saved to /boot/aawgd.conf\"}");
 }

@@ -1,2 +1,8 @@
 /images
 /.vagrant
+
+# Local ad-hoc configuration & credentials (never committed)
+*.local.conf
+*.adhoc.conf
+aawgd.local.conf
+aawgd.adhoc.conf

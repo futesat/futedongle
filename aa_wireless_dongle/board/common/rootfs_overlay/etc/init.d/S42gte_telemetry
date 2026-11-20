@@ -16,6 +16,9 @@ load_conf() {
 	if [ -r /boot/aawgd.conf ]; then
 		. /boot/aawgd.conf
 	fi
+	if [ -r /persist/aawgd.conf ]; then
+		. /persist/aawgd.conf
+	fi
 	set +a
 }
 

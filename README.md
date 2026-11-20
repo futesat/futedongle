@@ -43,11 +43,11 @@ flowchart TD
     Boot["Boot (Klemme 30G USB 5V Power)"] --> S38["S38garage_opener probe (2.4 GHz Garage Wi-Fi Check)"]
     S38 -->|Caches BSSID, Freq, IP & ARP in /var/run/garage_in_range| S39["S39hostapd_conf & S40network (5 GHz AP 10.0.0.1/24)"]
     S39 --> S41["S41bluetooth & S80dnsmasq (no-ping instant DHCP)"]
+    S41 --> S42["S42gte_telemetry (BLE Vgate iCar Pro 2S Daemon)"]
     S41 --> S93["S93aawgd (Wireless Android Auto Proxy + Web Portal :80)"]
-    S41 --> S94["S94gte_telemetry (BLE Vgate iCar Pro 2S Daemon)"]
-    S94 -->|Polls 010C + ATRV every 350ms| StartCheck{"Car START Pressed? (Klemme 15 / READY)"}
+    S42 -->|Polls 010C + ATRV every 350ms| StartCheck{"Car START Pressed? (Klemme 15 / READY)"}
     StartCheck -->|Yes & /var/run/garage_in_range exists| Fire["S38garage_opener fire (DSCP EF UDP Burst -> Restore 5 GHz AP)"]
-    S94 -->|Writes atomic JSON every 1.2s| TelemetryJSON["/var/run/gte_telemetry.json"]
+    S42 -->|Writes atomic JSON every 1.2s| TelemetryJSON["/var/run/gte_telemetry.json"]
     TelemetryJSON --> WebPortal["http://10.0.0.1 (Status & Car Tabs)"]
 ```
 
@@ -59,9 +59,9 @@ flowchart TD
 | `S39` | `S39hostapd_conf` | Generates `/var/run/hostapd.conf` for the 5 GHz (`hw_mode=a`, `channel=36`, `HT40+`) or 2.4 GHz Android Auto access point. |
 | `S40` | `S40network` | Brings up `lo` and `wlan0` (`10.0.0.1/24`) and launches `hostapd`. |
 | `S41` | `S41bluetooth` | Loads Broadcom `hci_uart` firmware (`BCM4345C0.hcd`), brings `hci0` UP synchronously, and starts `bluetoothd`. |
+| `S42` | `S42gte_telemetry` (`/usr/bin/gte_telemetryd`) | Supervises the BLE OBD-II & VW MQB UDS telemetry daemon and Car-`START` garage trigger monitor (launched early right after Bluetooth). |
 | `S80` | `S80dnsmasq` | Runs `dnsmasq` with `no-ping` for sub-100ms `DHCPOFFER` leases (`10.0.0.10` – `10.0.0.50`) and captive DNS aliases (`futedongle.local`, `dongle.local`). |
 | `S93` | `S93aawgd` (`/usr/bin/aawgd`) | Supervises the core Android Auto Wireless C++ daemon and embedded HTTP Web Portal (`0.0.0.0:80`). |
-| `S94` | `S94gte_telemetry` (`/usr/bin/gte_telemetryd`) | Supervises the BLE OBD-II & VW MQB UDS telemetry daemon and Car-`START` garage trigger monitor. |
 
 ---
 
@@ -227,8 +227,8 @@ Configuration is loaded from `/etc/aawgd.conf`, overridden by `/boot/aawgd.conf`
 | `AAWG_GARAGE_UDP_HOST` | `192.168.1.50` | Target IP address of the garage door controller. |
 | `AAWG_GARAGE_UDP_PORT` | `9876` | Target UDP port of the garage door controller. |
 | `AAWG_GARAGE_UDP_PAYLOAD` | `'OPEN_GARAGE'` | ASCII payload transmitted in the DSCP `EF` UDP burst. |
-| `AAWG_GARAGE_TIMEOUT_SEC` | `5` | Maximum association timeout (seconds) before falling back to the 5 GHz Android Auto AP. |
-| `AAWG_ENABLE_OBD_TELEMETRY` | `1` | Enables `/usr/bin/gte_telemetryd` (`S94gte_telemetry`). |
+| `AAWG_GARAGE_TIMEOUT_SEC` | `8` | Maximum association timeout (seconds) before falling back to the 5 GHz Android Auto AP. |
+| `AAWG_ENABLE_OBD_TELEMETRY` | `1` | Enables `/usr/bin/gte_telemetryd` (`S42gte_telemetry`). |
 | `AAWG_OBD_BLE_MAC` | *(Auto-discover)* | Optional fixed BLE MAC address (e.g., `D2:E0:2F:8D:5C:7B`) for the Vgate iCar Pro 2S (`IOS-Vlink`) to skip BLE scanning on boot. |
 
 ---
