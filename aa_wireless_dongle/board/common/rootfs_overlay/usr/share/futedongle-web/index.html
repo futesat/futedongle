@@ -839,9 +839,11 @@
         document.getElementById('st-gadget').textContent = d.active_gadget;
         document.getElementById('st-garage').innerHTML = d.garage_opened_once
           ? '<span class="badge ok">Opened This Boot</span>'
-          : (d.garage_in_range
+          : ((d.garage_hold_active || d.garage_in_range)
               ? '<span class="badge warn">Armed (Wait Car START)</span>'
-              : '<span class="badge">Disarmed (Out of Range)</span>');
+              : (d.garage_disarmed
+                  ? '<span class="badge">Disarmed (Timeout)</span>'
+                  : '<span class="badge">Disarmed (Out of Range)</span>'));
         if (d.gte_telemetry) {
           const g = d.gte_telemetry;
           document.getElementById('st-obd').innerHTML = g.adapter_connected
@@ -886,9 +888,11 @@
             (g.speed_kmh ?? 0) + ' km/h (Max ' + (g.trip_max_speed_kmh ?? 0) + ')';
           document.getElementById('gte-garage').innerHTML = (g.garage_triggered_by_obd || d.garage_opened_once)
             ? '<span class="badge ok">Fired on START</span>'
-            : (d.garage_in_range
+            : ((d.garage_hold_active || d.garage_in_range)
                 ? '<span class="badge warn">Armed (Press START)</span>'
-                : '<span class="badge">Disarmed</span>');
+                : (d.garage_disarmed
+                    ? '<span class="badge">Disarmed (Timeout)</span>'
+                    : '<span class="badge">Disarmed</span>'));
           const odoStr = (g.odometer_km !== null && g.odometer_km !== undefined) ? (g.odometer_km + ' km') : 'Odo N/A';
           const dtcBadge = g.mil_on
             ? '<span class="badge err">MIL (' + (g.dtc_count ?? 0) + ' DTC)</span>'

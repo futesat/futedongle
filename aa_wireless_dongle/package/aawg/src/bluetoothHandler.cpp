@@ -462,11 +462,11 @@ void BluetoothHandler::powerOff() {
 
     // Keep hci0 powered ON for gte_telemetryd BLE GATT polling while disabling
     // Discoverable/Pairable so the phone stays on the car's native HFP audio.
+    // If telemetry is disabled (AAWG_ENABLE_OBD_TELEMETRY=0), garage opening already
+    // finished during the boot hold before aawgd launched and gte_telemetryd has exited,
+    // so power down hci0 completely to leave the phone's Bluetooth on factory HFP handsfree.
     const char* obdEnv = getenv("AAWG_ENABLE_OBD_TELEMETRY");
-    const char* garageEnv = getenv("AAWG_ENABLE_GARAGE_OPEN");
-    const bool keepHciPoweredForBle =
-        (obdEnv && std::string(obdEnv) == "1") ||
-        (garageEnv && std::string(garageEnv) == "1");
+    const bool keepHciPoweredForBle = (obdEnv && std::string(obdEnv) == "1");
 
     if (keepHciPoweredForBle) {
         setPairable(false);

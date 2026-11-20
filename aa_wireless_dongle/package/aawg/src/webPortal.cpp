@@ -28,6 +28,7 @@ constexpr const char* DEFAULT_BIND_IP = "10.0.0.1";
 constexpr int DEFAULT_PORT = 80;
 constexpr const char* WEB_ROOT_INDEX = "/usr/share/futedongle-web/index.html";
 constexpr const char* BOOT_CONF_PATH = "/boot/aawgd.conf";
+constexpr const char* PERSIST_CONF_PATH = "/persist/aawgd.conf";
 constexpr const char* ETC_CONF_PATH = "/etc/aawgd.conf";
 constexpr const char* BOOT_LOCK_PATH = "/var/run/boot_mount.lock";
 
@@ -307,7 +308,9 @@ std::string buildStatusJson() {
     bool tcpProxyActive = isTcpPortEstablished(5288);
     bool aawgdRunning = isProcessRunning("aawgd");
     bool garageInRange = (access("/var/run/garage_in_range", F_OK) == 0);
+    bool garageHoldActive = (access("/var/run/garage_hold", F_OK) == 0);
     bool garageOpenedOnce = (access("/var/run/garage_opened_once", F_OK) == 0);
+    bool garageDisarmed = (access("/var/run/garage_disarmed", F_OK) == 0);
     int undervoltageCount = countUndervoltageEvents();
 
     // DHCP Leases
@@ -367,7 +370,9 @@ std::string buildStatusJson() {
     out << "\"aawgd_running\":" << (aawgdRunning ? "true" : "false") << ",";
     out << "\"tcp_proxy_active\":" << (tcpProxyActive ? "true" : "false") << ",";
     out << "\"garage_in_range\":" << (garageInRange ? "true" : "false") << ",";
+    out << "\"garage_hold_active\":" << (garageHoldActive ? "true" : "false") << ",";
     out << "\"garage_opened_once\":" << (garageOpenedOnce ? "true" : "false") << ",";
+    out << "\"garage_disarmed\":" << (garageDisarmed ? "true" : "false") << ",";
     out << "\"dhcp_leases\":" << leasesJson.str() << ",";
     out << "\"car_gps\":" << carGpsRaw << ",";
     out << "\"gte_telemetry\":" << gteTelemetryRaw;
@@ -457,6 +462,9 @@ void handleLogsEndpoint(int clientFd, const std::map<std::string, std::string>& 
 
 std::string getConfFilePath() {
     struct stat st;
+    if (stat(PERSIST_CONF_PATH, &st) == 0) {
+        return PERSIST_CONF_PATH;
+    }
     if (stat(BOOT_CONF_PATH, &st) == 0) {
         return BOOT_CONF_PATH;
     }
@@ -555,25 +563,28 @@ std::map<std::string, std::string> readConfigMap() {
         {"AAWG_GARAGE_HOLD_TIMEOUT_SEC", "120"}
     };
 
-    std::ifstream file(getConfFilePath());
-    if (!file.is_open()) {
-        return cfg;
-    }
+    // Load in priority order matching system init scripts: /etc -> /boot -> /persist
+    for (const char* confPath : {ETC_CONF_PATH, BOOT_CONF_PATH, PERSIST_CONF_PATH}) {
+        std::ifstream file(confPath);
+        if (!file.is_open()) {
+            continue;
+        }
 
-    std::string line;
-    while (std::getline(file, line)) {
-        std::string t = trim(line);
-        if (t.empty() || t[0] == '#') {
-            continue;
-        }
-        size_t eq = t.find('=');
-        if (eq == std::string::npos) {
-            continue;
-        }
-        std::string key = trim(t.substr(0, eq));
-        std::string val = unquoteShellValue(trim(t.substr(eq + 1)));
-        if (cfg.find(key) != cfg.end()) {
-            cfg[key] = val;
+        std::string line;
+        while (std::getline(file, line)) {
+            std::string t = trim(line);
+            if (t.empty() || t[0] == '#') {
+                continue;
+            }
+            size_t eq = t.find('=');
+            if (eq == std::string::npos) {
+                continue;
+            }
+            std::string key = trim(t.substr(0, eq));
+            std::string val = unquoteShellValue(trim(t.substr(eq + 1)));
+            if (cfg.find(key) != cfg.end()) {
+                cfg[key] = val;
+            }
         }
     }
     return cfg;
@@ -771,7 +782,7 @@ void handlePostConfig(int clientFd, const std::string& body) {
     }
 
     bool bootMountedRw = (system("/bin/mount -o remount,rw /boot 2>/dev/null") == 0);
-    std::string targetPath = bootMountedRw ? BOOT_CONF_PATH : getConfFilePath();
+    std::string targetPath = bootMountedRw ? BOOT_CONF_PATH : PERSIST_CONF_PATH;
     std::string tmpPath = targetPath + ".tmp";
 
     std::ostringstream confContent;

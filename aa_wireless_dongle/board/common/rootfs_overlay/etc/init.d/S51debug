@@ -3,8 +3,12 @@
 # Optional diagnostic network (AAWG_ENABLE_SSH=1) and SD boot telemetry (AAWG_ENABLE_DEBUG_LOG=1)
 #
 
-if [ -z "$AAWG_CONF_SOURCED" ] && [ -r /etc/aawgd.conf ]; then
-	. /etc/aawgd.conf
+if [ -z "$AAWG_CONF_SOURCED" ]; then
+	set -a
+	for conf in /etc/aawgd.conf /boot/aawgd.conf /persist/aawgd.conf; do
+		[ -r "$conf" ] && . "$conf"
+	done
+	set +a
 fi
 
 case "$1" in

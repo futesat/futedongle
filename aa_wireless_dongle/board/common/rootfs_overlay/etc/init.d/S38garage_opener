@@ -206,7 +206,7 @@ load_garage_config() {
 }
 
 probe_garage_at_boot() {
-	rm -f "$GARAGE_IN_RANGE_FLAG" "$GARAGE_OPENED_ONCE_FLAG" "$GARAGE_ENV_FILE" "$GARAGE_DHCP_ENV" "$GARAGE_HOLD_FLAG"
+	rm -f "$GARAGE_IN_RANGE_FLAG" "$GARAGE_OPENED_ONCE_FLAG" "$GARAGE_ENV_FILE" "$GARAGE_DHCP_ENV" "$GARAGE_HOLD_FLAG" /var/run/garage_disarmed
 	rm -rf "$GARAGE_LOCK_DIR" 2>/dev/null || true
 
 	if [ "${AAWG_ENABLE_GARAGE_OPEN:-0}" != "1" ]; then
@@ -349,7 +349,7 @@ release_hold() {
 		log_info "Garage fire already in progress; skipping release."
 		return 0
 	fi
-	touch "$GARAGE_OPENED_ONCE_FLAG"
+	touch /var/run/garage_disarmed
 	rm -f "$GARAGE_IN_RANGE_FLAG"
 	if [ -f "$GARAGE_HOLD_FLAG" ]; then
 		GARAGE_TOUCHED_WLAN0=1
@@ -360,8 +360,8 @@ release_hold() {
 }
 
 fire_garage_at_runtime() {
-	if [ -f "$GARAGE_OPENED_ONCE_FLAG" ] || ! mkdir "$GARAGE_LOCK_DIR" 2>/dev/null; then
-		log_info "Garage opener already fired or locked; skipping."
+	if [ -f "$GARAGE_OPENED_ONCE_FLAG" ] || [ -f "/var/run/garage_disarmed" ] || ! mkdir "$GARAGE_LOCK_DIR" 2>/dev/null; then
+		log_info "Garage opener already fired, disarmed, or locked; skipping."
 		return 0
 	fi
 	touch "$GARAGE_OPENED_ONCE_FLAG"

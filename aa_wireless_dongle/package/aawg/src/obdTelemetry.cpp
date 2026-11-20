@@ -436,14 +436,15 @@ bool isObdTelemetryEnabled() {
 bool isGarageOpenEnabled() {
     const char* env = getenv("AAWG_ENABLE_GARAGE_OPEN");
     if (!env || env[0] == '\0') {
-        return true;
+        return false;
     }
     return (std::string(env) == "1");
 }
 
 bool shouldFireGarageOnObdStart() {
     return (access(GARAGE_HOLD_FLAG, F_OK) == 0) &&
-           (access(GARAGE_OPENED_FLAG, F_OK) != 0);
+           (access(GARAGE_OPENED_FLAG, F_OK) != 0) &&
+           (access("/var/run/garage_disarmed", F_OK) != 0);
 }
 
 void fireGarageOpenerProcess() {
