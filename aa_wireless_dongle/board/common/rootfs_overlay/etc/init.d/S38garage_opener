@@ -214,6 +214,11 @@ probe_garage_at_boot() {
 		return 0
 	fi
 
+	if [ "${AAWG_GARAGE_HOLD_UNTIL_START:-1}" = "0" ]; then
+		log_info "AAWG_GARAGE_HOLD_UNTIL_START=0; starting Android Auto AP directly without hold."
+		return 0
+	fi
+
 	load_garage_config
 
 	if [ -z "$SSID" ] || [ -z "$UDP_HOST" ] || [ -z "$UDP_PORT" ]; then

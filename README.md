@@ -231,6 +231,7 @@ Configuration is loaded from `/etc/aawgd.conf`, overridden by `/boot/aawgd.conf`
 | `AAWG_GARAGE_UDP_PORT` | `9876` | Target UDP port of the garage door controller. |
 | `AAWG_GARAGE_UDP_PAYLOAD` | `'OPEN_GARAGE'` | ASCII payload transmitted in the DSCP `EF` UDP burst. |
 | `AAWG_GARAGE_TIMEOUT_SEC` | `8` | Maximum association timeout (seconds) before falling back to the 5 GHz Android Auto AP. |
+| `AAWG_GARAGE_HOLD_UNTIL_START` | `1` | `1` to hold Android Auto radios until Car `START` fires the door; `0` to start the 5 GHz Android Auto AP immediately at boot without holding or opening. |
 | `AAWG_GARAGE_HOLD_TIMEOUT_SEC` | `120` | Max wait for Car `START` during the hold; on expiry the trigger is disarmed and Android Auto starts. |
 | `AAWG_ENABLE_OBD_TELEMETRY` | `1` | Enables `/usr/bin/gte_telemetryd` (`S42gte_telemetry`). |
 | `AAWG_OBD_BLE_MAC` | *(Auto-discover)* | Optional fixed BLE MAC address (e.g., `D2:E0:2F:8D:5C:7B`) for the Vgate iCar Pro 2S (`IOS-Vlink`) to skip BLE scanning on boot. |
