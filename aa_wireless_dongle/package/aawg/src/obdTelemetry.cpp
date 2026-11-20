@@ -53,6 +53,7 @@ static constexpr const char* RUN_OBD_MAC_PATH = "/var/run/obd_ble_mac";
 static constexpr const char* GARAGE_IN_RANGE_FLAG = "/var/run/garage_in_range";
 static constexpr const char* GARAGE_OPENED_FLAG = "/var/run/garage_opened_once";
 static constexpr const char* GARAGE_FIRING_FLAG = "/var/run/garage_firing";
+static constexpr const char* GARAGE_HOLD_FLAG = "/var/run/garage_hold";
 static constexpr const char* GARAGE_INIT_SCRIPT = "/etc/init.d/S38garage_opener";
 
 std::atomic<bool> g_shouldExit{false};
@@ -996,8 +997,9 @@ int main() {
     // Wait briefly at boot so aawgd can register its profiles first; if we are in the
     // garage waiting for the car START button, begin looking after 3s (or immediately
     // once TCP :5288 is active).
+    // While S43garage_gate holds the boot, aawgd is not running yet: start immediately.
     for (int i = 0; i < 6 && !g_shouldExit.load(); ++i) {
-        if (isTcpPortEstablished(5288)) {
+        if (isTcpPortEstablished(5288) || access(GARAGE_HOLD_FLAG, F_OK) == 0) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(500));

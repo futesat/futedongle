@@ -6,6 +6,11 @@
 #      frequency, DHCP lease (IP, subnet, gateway), and target ARP MAC in
 #      /var/run/garage_env + /var/run/garage_in_range WITHOUT opening the door,
 #      then cleans up wlan0 completely so the 5 GHz Android Auto AP starts cleanly.
+#      When AAWG_GARAGE_HOLD_UNTIL_START=1 (default) and the trigger mode is
+#      obd_start, the garage link is KEPT associated instead and
+#      /var/run/garage_hold is created: S43garage_gate then holds the boot (no
+#      Android Auto AP, no phone Bluetooth) until "fire" sends the UDP trigger
+#      on Car START, or "release" gives up after the hold timeout.
 #   2. "fire" (invoked once by aawgd when Android Auto foreground video starts):
 #      Temporarily switches wlan0 from hostapd to the cached garage channel/IP,
 #      transmits the UDP trigger burst via /usr/bin/garage_udp_send, and
@@ -14,11 +19,12 @@
 
 export PATH="/sbin:/usr/sbin:/bin:/usr/bin"
 
-if [ -r /etc/aawgd.conf ]; then
-	set -a
-	. /etc/aawgd.conf
-	set +a
-fi
+# Later files override earlier ones (web portal settings live in /persist)
+set -a
+for CONF_FILE in /etc/aawgd.conf /boot/aawgd.conf /persist/aawgd.conf; do
+	[ -r "$CONF_FILE" ] && . "$CONF_FILE"
+done
+set +a
 
 WPA_PIDFILE="/var/run/garage_wpa.pid"
 WPA_CONF="/var/run/garage_wpa.conf"
@@ -29,6 +35,9 @@ GARAGE_DHCP_ENV="/var/run/garage_dhcp.env"
 GARAGE_ENV_FILE="/var/run/garage_env"
 GARAGE_IN_RANGE_FLAG="/var/run/garage_in_range"
 GARAGE_OPENED_ONCE_FLAG="/var/run/garage_opened_once"
+GARAGE_HOLD_FLAG="/var/run/garage_hold"
+GARAGE_LOCK_DIR="/var/run/garage_lock"
+FIRED_FROM_HOLD=0
 
 GARAGE_TOUCHED_WLAN0=0
 NEED_RESTORE_AP=0
@@ -294,7 +303,8 @@ load_garage_config() {
 }
 
 probe_garage_at_boot() {
-	rm -f "$GARAGE_IN_RANGE_FLAG" "$GARAGE_OPENED_ONCE_FLAG" "$GARAGE_ENV_FILE" "$GARAGE_DHCP_ENV"
+	rm -f "$GARAGE_IN_RANGE_FLAG" "$GARAGE_OPENED_ONCE_FLAG" "$GARAGE_ENV_FILE" "$GARAGE_DHCP_ENV" "$GARAGE_HOLD_FLAG"
+	rm -rf "$GARAGE_LOCK_DIR" 2>/dev/null || true
 
 	if [ "${AAWG_ENABLE_GARAGE_OPEN:-0}" != "1" ]; then
 		log_info "Disabled (AAWG_ENABLE_GARAGE_OPEN != 1), skipping boot probe."
@@ -422,12 +432,74 @@ probe_garage_at_boot() {
 	} >> "$GARAGE_ENV_FILE"
 
 	touch "$GARAGE_IN_RANGE_FLAG"
+	if [ "${AAWG_GARAGE_HOLD_UNTIL_START:-1}" = "1" ] && [ "${AAWG_GARAGE_TRIGGER_MODE:-obd_start}" = "obd_start" ]; then
+		touch "$GARAGE_HOLD_FLAG"
+		log_info "Garage Wi-Fi '${SSID}' detected at boot (freq=${GARAGE_FREQ:-auto} MHz, ip=${GARAGE_IP:-dhcp}); keeping link up and holding Android Auto radios until Car START."
+		return 0
+	fi
 	log_info "Garage Wi-Fi '${SSID}' detected at boot (freq=${GARAGE_FREQ:-auto} MHz, ip=${GARAGE_IP:-dhcp}, mac=${GARAGE_TARGET_MAC:-arp}); armed for trigger mode '${AAWG_GARAGE_TRIGGER_MODE:-obd_start}'."
 	return 0
 }
 
+send_from_hold() {
+	FIRED_FROM_HOLD=1
+	GARAGE_TOUCHED_WLAN0=1
+	touch /var/run/garage_firing 2>/dev/null || true
+	trap 'trap "" EXIT INT TERM; cleanup; rm -f "$GARAGE_HOLD_FLAG" /var/run/garage_firing 2>/dev/null || true; exit 0' EXIT INT TERM
+
+	if [ -f "$GARAGE_ENV_FILE" ]; then
+		. "$GARAGE_ENV_FILE"
+	fi
+
+	# Fast path: the boot probe left wlan0 associated with the garage AP
+	if ! wait_for_wpa_connection 20; then
+		log_info "Held garage link dropped; re-associating with '${SSID}'..."
+		kill_wpa_and_wait
+		rm -f "$WPA_LOG"
+		write_wpa_conf "${GARAGE_FREQ:+freq_list=${GARAGE_FREQ}}"
+		if ! wpa_supplicant -D nl80211 -i wlan0 -c "$WPA_CONF" -P "$WPA_PIDFILE" -f "$WPA_LOG" -B >/dev/null 2>&1 || \
+		   ! wait_for_wpa_connection $((TIMEOUT_SEC * 10)); then
+			log_info "Failed to re-associate with '${SSID}'; releasing Android Auto radios without opening."
+			return 0
+		fi
+	fi
+
+	if ! ip -4 addr show dev wlan0 2>/dev/null | grep -q "inet "; then
+		write_udhcpc_script
+		if ! udhcpc -i wlan0 -n -q -t 2 -T 1 -A 0 -p "$UDHCPC_PIDFILE" -s "$UDHCPC_SCRIPT" >/dev/null 2>&1; then
+			log_info "Failed to configure IP on '${SSID}'; releasing Android Auto radios without opening."
+			return 0
+		fi
+	fi
+	if [ -n "${GARAGE_TARGET_IP:-}" ] && [ -n "${GARAGE_TARGET_MAC:-}" ]; then
+		ip neigh replace "$GARAGE_TARGET_IP" lladdr "$GARAGE_TARGET_MAC" nud reachable dev wlan0 2>/dev/null || true
+	fi
+
+	if /usr/bin/garage_udp_send "$UDP_HOST" "$UDP_PORT" "$UDP_PAYLOAD"; then
+		log_info "Garage UDP trigger sent to ${UDP_HOST}:${UDP_PORT} over held link; releasing Android Auto radios."
+	else
+		log_info "Garage UDP send failed to ${UDP_HOST}:${UDP_PORT}; releasing Android Auto radios."
+	fi
+	return 0
+}
+
+release_hold() {
+	if ! mkdir "$GARAGE_LOCK_DIR" 2>/dev/null; then
+		log_info "Garage fire already in progress; letting it release the hold."
+		return 0
+	fi
+	touch "$GARAGE_OPENED_ONCE_FLAG"
+	rm -f "$GARAGE_IN_RANGE_FLAG"
+	if [ -f "$GARAGE_HOLD_FLAG" ]; then
+		GARAGE_TOUCHED_WLAN0=1
+		cleanup
+		rm -f "$GARAGE_HOLD_FLAG"
+		log_info "Garage hold released without opening; garage trigger disarmed for this drive."
+	fi
+}
+
 fire_garage_at_runtime() {
-	if [ -f "$GARAGE_OPENED_ONCE_FLAG" ]; then
+	if [ -f "$GARAGE_OPENED_ONCE_FLAG" ] || ! mkdir "$GARAGE_LOCK_DIR" 2>/dev/null; then
 		log_info "Garage opener already fired once this boot; skipping."
 		return 0
 	fi
@@ -443,6 +515,11 @@ fire_garage_at_runtime() {
 
 	if [ -z "$SSID" ] || [ -z "$UDP_HOST" ] || [ -z "$UDP_PORT" ]; then
 		log_info "Missing garage SSID or UDP target configuration, skipping."
+		return 0
+	fi
+
+	if [ -f "$GARAGE_HOLD_FLAG" ]; then
+		send_from_hold
 		return 0
 	fi
 
@@ -574,14 +651,27 @@ case "$1" in
 		probe_garage_at_boot
 		stop_watchdog
 		trap '' EXIT INT TERM
-		cleanup
+		if [ -f "$GARAGE_HOLD_FLAG" ]; then
+			# Keep wpa_supplicant + lease alive; S43garage_gate owns the hold
+			GARAGE_TOUCHED_WLAN0=0
+		else
+			cleanup
+		fi
 		;;
 	fire)
 		fire_garage_at_runtime
 		stop_watchdog
 		trap '' EXIT INT TERM
 		cleanup
-		restore_ap
+		if [ "$FIRED_FROM_HOLD" = "1" ]; then
+			# S43garage_gate brings up the Android Auto AP once the hold is gone
+			rm -f "$GARAGE_HOLD_FLAG" /var/run/garage_firing 2>/dev/null || true
+		else
+			restore_ap
+		fi
+		;;
+	release)
+		release_hold
 		;;
 	stop)
 		if [ -f "$WPA_PIDFILE" ]; then
@@ -591,7 +681,7 @@ case "$1" in
 		fi
 		;;
 	*)
-		echo "Usage: $0 {start|fire|stop}"
+		echo "Usage: $0 {start|fire|release|stop}"
 		exit 1
 		;;
 esac

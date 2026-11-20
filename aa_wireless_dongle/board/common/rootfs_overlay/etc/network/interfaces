@@ -13,6 +13,8 @@ auto wlan0
 iface wlan0 inet static
   address 10.0.0.1
   netmask 255.255.255.0
+  # Defer the Android Auto AP while S38garage_opener holds the garage link
+  pre-up [ ! -f /var/run/garage_hold ]
   pre-up rfkill unblock wifi 2>/dev/null || true
   pre-up sleep 0.5
   pre-up hostapd -B /var/run/hostapd.conf -t -f /var/log/hostapd

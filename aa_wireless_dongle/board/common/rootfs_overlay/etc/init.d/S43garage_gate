@@ -1,0 +1,93 @@
+#!/bin/sh
+#
+# Garage hold gate.
+#
+# When S38garage_opener finds the garage Wi-Fi at boot it keeps wlan0
+# associated and creates /var/run/garage_hold. This script blocks the rest of
+# the boot sequence (Android Auto AP, phone Bluetooth agent, aawgd) until:
+#   - gte_telemetryd detects Car START and "S38garage_opener fire" sends the
+#     UDP trigger over the held link (removes the hold flag), or
+#   - AAWG_GARAGE_HOLD_TIMEOUT_SEC elapses without START (hold is released and
+#     the garage trigger is disarmed for this drive), or
+#   - gte_telemetryd is not running, so START can never be detected.
+# Afterwards it brings up the 5 GHz Android Auto AP on wlan0.
+#
+
+export PATH="/sbin:/usr/sbin:/bin:/usr/bin"
+
+HOLD_FLAG="/var/run/garage_hold"
+GARAGE_SCRIPT="/etc/init.d/S38garage_opener"
+
+log_info() {
+	echo "garage_gate: $1"
+	logger -p daemon.info -t garage_gate "$1" 2>/dev/null || true
+}
+
+load_conf() {
+	set -a
+	[ -r /etc/aawgd.conf ] && . /etc/aawgd.conf
+	[ -r /boot/aawgd.conf ] && . /boot/aawgd.conf
+	[ -r /persist/aawgd.conf ] && . /persist/aawgd.conf
+	set +a
+}
+
+bring_up_ap() {
+	if pidof hostapd >/dev/null 2>&1; then
+		return 0
+	fi
+	log_info "Bringing up 5 GHz Android Auto AP on wlan0..."
+	ifdown -f wlan0 >/dev/null 2>&1 || true
+	ifup wlan0 >/dev/null 2>&1 || log_info "WARNING: ifup wlan0 failed."
+}
+
+case "$1" in
+	start)
+		[ -f "$HOLD_FLAG" ] || exit 0
+
+		load_conf
+		HOLD_TIMEOUT="${AAWG_GARAGE_HOLD_TIMEOUT_SEC:-120}"
+		case "$HOLD_TIMEOUT" in
+			''|*[!0-9]*) HOLD_TIMEOUT=120 ;;
+		esac
+		[ "$HOLD_TIMEOUT" -lt 10 ] && HOLD_TIMEOUT=10
+		[ "$HOLD_TIMEOUT" -gt 600 ] && HOLD_TIMEOUT=600
+
+		log_info "Holding Android Auto radios until Car START (timeout ${HOLD_TIMEOUT}s)..."
+		TICKS=0
+		MAX_TICKS=$((HOLD_TIMEOUT * 5))
+		while [ -f "$HOLD_FLAG" ] && [ "$TICKS" -lt "$MAX_TICKS" ]; do
+			# Without the telemetry daemon nobody can detect START; give up after 5s
+			if [ "$TICKS" -ge 25 ] && ! pidof gte_telemetryd >/dev/null 2>&1; then
+				log_info "gte_telemetryd is not running; Car START cannot be detected."
+				break
+			fi
+			sleep 0.2
+			TICKS=$((TICKS + 1))
+		done
+
+		# A fire that is already transmitting gets up to 20s to finish
+		F_TICK=0
+		while [ -f /var/run/garage_firing ] && [ "$F_TICK" -lt 100 ]; do
+			sleep 0.2
+			F_TICK=$((F_TICK + 1))
+		done
+
+		if [ -f "$HOLD_FLAG" ]; then
+			log_info "No Car START after $((TICKS / 5))s; releasing garage hold."
+			"$GARAGE_SCRIPT" release
+			rm -f "$HOLD_FLAG"
+		else
+			log_info "Garage hold finished after $((TICKS / 5))s."
+		fi
+
+		bring_up_ap
+		;;
+	stop)
+		;;
+	*)
+		echo "Usage: $0 {start|stop}"
+		exit 1
+		;;
+esac
+
+exit 0
