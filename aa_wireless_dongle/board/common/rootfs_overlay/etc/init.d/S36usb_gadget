@@ -66,6 +66,23 @@ start() {
 	RETVAL=$?
 	sleep 1
 	[ $RETVAL = 0 ] && echo "OK" || echo "FAIL"
+
+	# Bind the default gadget to the UDC controller immediately upon boot.
+	# This ensures the car's MIB infotainment unit detects an active USB device
+	# on D+/D- lines within the first 3 seconds of power, preventing the car from
+	# cutting USB power after 20-30 seconds while S43garage_gate waits for Car START.
+	UDC=""
+	W_UDC=0
+	while [ "$W_UDC" -lt 25 ]; do
+		UDC=$(ls -1 /sys/class/udc/ 2>/dev/null | head -n 1)
+		[ -n "$UDC" ] && break
+		sleep 0.2
+		W_UDC=$((W_UDC + 1))
+	done
+	if [ -n "$UDC" ]; then
+		echo "$UDC" > "/sys/kernel/config/usb_gadget/$DEFAULT_GADGET_NAME/UDC" 2>/dev/null || true
+		logger -p daemon.info -t usb_gadget "Early USB gadget: bound $DEFAULT_GADGET_NAME to $UDC"
+	fi
 }
 
 stop() {

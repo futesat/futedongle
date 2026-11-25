@@ -59,6 +59,7 @@ flowchart TD
 
 | Order | Init Script / Binary | Responsibility |
 | :--- | :--- | :--- |
+| `S36` | `S36usb_gadget` (`/usr/sbin/umtprd`) | Initializes USB ConfigFS gadgets (`default` MTP and `accessory` AOAP) and binds the default gadget immediately to prevent the car's MIB3 infotainment from cutting USB power after 20–30s. |
 | `S38` | `S38garage_opener` (`/usr/bin/garage_udp_send`) | Probes garage Wi-Fi availability at boot and keeps the link up when in range. Called with `fire` by `gte_telemetryd` on Car `START`, and with `release` by `S43garage_gate` on hold timeout. |
 | `S39` | `S39hostapd_conf` | Generates `/var/run/hostapd.conf` for the 5 GHz (`hw_mode=a`, `channel=36`, `HT40+`) or 2.4 GHz Android Auto access point. |
 | `S40` | `S40network` | Brings up `lo` and `wlan0` (`10.0.0.1/24`) and launches `hostapd` (skipped while `/var/run/garage_hold` exists). |
